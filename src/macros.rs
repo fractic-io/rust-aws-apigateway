@@ -86,12 +86,14 @@ macro_rules! register_function_route_raw {
 
 #[macro_export]
 macro_rules! register_crud_route_from_scaffolding {
-    ($handler_name:ident, $db_var:expr, $type:ident) => {
+    ($handler_name:ident, $ctx_arc:expr, $table_fn:expr, $type:ident) => {
         pub async fn $handler_name(
             event: LambdaEvent<ApiGatewayProxyRequest>,
             _: RequestMetadata,
         ) -> Result<ApiGatewayProxyResponse, Error> {
-            match CrudRouteScaffolding::new($db_var).await {
+            let ctx: std::sync::Arc<_> = $ctx_arc;
+            let table: String = $table_fn(&*ctx);
+            match CrudRouteScaffolding::new(&*ctx, table).await {
                 Ok(scaffolding) => scaffolding.handle_request::<$type>(event).await,
                 Err(error) => build_error(error),
             }
