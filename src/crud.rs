@@ -1,18 +1,18 @@
 use aws_lambda_events::apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse};
 use aws_lambda_events::http::Method;
+use fractic_aws_dynamo::DynamoCtxView;
 use fractic_aws_dynamo::errors::DynamoNotFound;
 use fractic_aws_dynamo::schema::{DynamoObject, PkSk};
 use fractic_aws_dynamo::util::DynamoUtil;
-use fractic_aws_dynamo::DynamoCtxView;
 use fractic_server_error::CriticalError;
 use fractic_server_error::ServerError;
 use lambda_runtime::Error;
 use lambda_runtime::LambdaEvent;
 
-use crate::{build_error, build_result, parse_request_data, InvalidRequestError};
+use crate::{InvalidRequestError, build_error, build_result, parse_request_data};
 
 pub struct CrudRouteScaffolding {
-    dynamo_util: DynamoUtil<aws_sdk_dynamodb::Client>,
+    dynamo_util: DynamoUtil,
 }
 
 #[derive(Debug)]
