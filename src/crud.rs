@@ -3,7 +3,7 @@ use aws_lambda_events::http::Method;
 use fractic_aws_dynamo::errors::DynamoNotFound;
 use fractic_aws_dynamo::schema::{DynamoObject, PkSk};
 use fractic_aws_dynamo::util::DynamoUtil;
-use fractic_env_config::{load_env, EnvConfigEnum};
+use fractic_aws_dynamo::DynamoCtxView;
 use fractic_server_error::CriticalError;
 use fractic_server_error::ServerError;
 use lambda_runtime::Error;
@@ -30,9 +30,11 @@ struct ObjectCreatedResponseData {
 }
 
 impl CrudRouteScaffolding {
-    pub async fn new<EnvConfig: EnvConfigEnum>(table_var: EnvConfig) -> Result<Self, ServerError> {
-        let env = load_env::<EnvConfig>()?;
-        let dynamo_util = DynamoUtil::new(env.clone_into()?, env.get(&table_var)?).await?;
+    pub async fn new(
+        ctx: &dyn DynamoCtxView,
+        table: impl Into<String>,
+    ) -> Result<Self, ServerError> {
+        let dynamo_util = DynamoUtil::new(ctx, table).await?;
         Ok(CrudRouteScaffolding { dynamo_util })
     }
 
