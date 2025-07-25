@@ -91,9 +91,13 @@ macro_rules! register_crud_route_from_scaffolding {
             event: LambdaEvent<ApiGatewayProxyRequest>,
             _: RequestMetadata,
         ) -> Result<ApiGatewayProxyResponse, Error> {
-            let ctx: std::sync::Arc<_> = $ctx_arc;
-            let table: String = $table_fn(&*ctx);
-            match CrudRouteScaffolding::new(&*ctx, table).await {
+            async fn build_scaffolding(
+            ) -> Result<CrudRouteScaffolding, ::fractic_server_error::ServerError> {
+                let ctx: std::sync::Arc<_> = $ctx_arc;
+                let table: String = $table_fn(&*ctx);
+                CrudRouteScaffolding::new(&*ctx, table).await
+            }
+            match build_scaffolding().await {
                 Ok(scaffolding) => scaffolding.handle_request::<$type>(event).await,
                 Err(error) => build_error(error),
             }
