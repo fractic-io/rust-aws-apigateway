@@ -20,10 +20,10 @@ use crate::constants::{INTERNAL_SERVER_ERROR_MSG, UNAUTHORIZED_ERROR_MSG};
 
 // All API responses are wrapped in the following wrapper:
 #[derive(Debug, Serialize)]
-struct ResponseWrapper<T> {
+struct ResponseWrapper {
     ok: bool,
     // If OK, response data.
-    data: Option<T>,
+    data: Option<String>,
     // If not OK, error message safe to show to user.
     error: Option<String>,
 }
@@ -44,7 +44,7 @@ where
 {
     let payload = ResponseWrapper {
         ok: true,
-        data: Some(data),
+        data: Some(serde_json::to_string(&data)?),
         error: None,
     };
     let resp = ApiGatewayProxyResponse {
@@ -77,7 +77,7 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
         println!("NOTE: Forwarding error to client. Returning 200 response.");
         // Since the data field will be set to None, we need to specify the
         // correct type T, so just use int.
-        let payload = ResponseWrapper::<i8> {
+        let payload = ResponseWrapper {
             ok: false,
             data: None,
             error: Some(public_msg.into()),
@@ -191,9 +191,10 @@ mod tests {
     use super::*;
     use aws_lambda_events::encodings::Body;
     use fractic_server_error::{define_client_error, define_user_error, CriticalError};
+    use serde::Deserialize;
     use serde_json::Value;
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct MockResponseData {
         key: String,
     }
@@ -210,7 +211,7 @@ mod tests {
 
         assert_eq!(result.status_code, 200);
         assert_eq!(body["ok"].as_bool().unwrap(), true);
-        assert_eq!(body["data"].as_str().unwrap(), "Test string.");
+        assert_eq!(body["data"].as_str().unwrap(), "\"Test string.\"");
         assert_eq!(body["error"].is_null(), true);
     }
 
@@ -228,7 +229,12 @@ mod tests {
 
         assert_eq!(result.status_code, 200);
         assert_eq!(body["ok"].as_bool().unwrap(), true);
-        assert_eq!(body["data"]["key"].as_str().unwrap(), "Test value.");
+        assert_eq!(
+            serde_json::from_str::<MockResponseData>(&body["data"].as_str().unwrap())
+                .unwrap()
+                .key,
+            "Test value."
+        );
         assert_eq!(body["error"].is_null(), true);
     }
 
