@@ -6,9 +6,9 @@ use aws_lambda_events::{
     http::{
         header::{
             ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
-            ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+            ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE,
         },
-        HeaderMap,
+        HeaderMap, HeaderValue,
     },
 };
 use base64::Engine as _;
@@ -38,19 +38,23 @@ struct ResponseWrapper {
     ///     specifyable by query parameter, and perhaps even versioning of some
     ///     sort.
     ///
+    #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<String>,
 
     /// If not OK, error message safe to show to user.
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
 
 pub fn build_simple(data: impl Into<Body>) -> ApiGatewayProxyResponse {
+    let body: Body = data.into();
+    let is_b64 = matches!(body, Body::Binary(_));
     ApiGatewayProxyResponse {
         status_code: 200,
-        headers: build_headers(),
+        headers: build_headers(ContentType::Text),
         multi_value_headers: Default::default(),
-        body: Some(data.into()),
-        is_base64_encoded: false,
+        body: Some(body),
+        is_base64_encoded: is_b64,
     }
 }
 
@@ -66,7 +70,7 @@ where
     };
     let resp = ApiGatewayProxyResponse {
         status_code: 200,
-        headers: build_headers(),
+        headers: build_headers(ContentType::Json),
         multi_value_headers: Default::default(),
         body: Some(serde_json::to_string(&wrapper)?.into()),
         is_base64_encoded: false,
@@ -92,8 +96,6 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
             LoggingLevel::Info => println!("INFO\n{}", error),
         }
         println!("NOTE: Forwarding error to client. Returning 200 response.");
-        // Since the data field will be set to None, we need to specify the
-        // correct type T, so just use int.
         let wrapper = ResponseWrapper {
             ok: false,
             data: None,
@@ -104,7 +106,7 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
             // otherwise Amplify will treat it as a server error. The client
             // will know there is a client error because ok == false.
             status_code: 200,
-            headers: build_headers(),
+            headers: build_headers(ContentType::Json),
             multi_value_headers: Default::default(),
             body: Some(serde_json::to_string(&wrapper)?.into()),
             is_base64_encoded: false,
@@ -117,7 +119,7 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
         eprintln!("ERROR\n{}", error);
         Ok::<_, Error>(ApiGatewayProxyResponse {
             status_code: error_code,
-            headers: build_headers(),
+            headers: build_headers(ContentType::Text),
             multi_value_headers: Default::default(),
             body: Some(public_msg.into()),
             is_base64_encoded: false,
@@ -163,8 +165,20 @@ fn gzip_base64(input: &[u8]) -> Result<String, ServerError> {
     Ok(base64::engine::general_purpose::STANDARD.encode(gz))
 }
 
-fn build_headers() -> HeaderMap {
+enum ContentType {
+    Json,
+    Text,
+}
+
+fn build_headers(content_type: ContentType) -> HeaderMap {
     let mut headers = HeaderMap::new();
+    headers.insert(
+        CONTENT_TYPE,
+        match content_type {
+            ContentType::Json => HeaderValue::from_static("application/json; charset=utf-8"),
+            ContentType::Text => HeaderValue::from_static("text/plain; charset=utf-8"),
+        },
+    );
     //
     // Build CORS headers to support web clients hosted on https://fractic.io
     // accessing the API.
@@ -192,19 +206,22 @@ fn build_headers() -> HeaderMap {
     //
     headers.insert(
         ACCESS_CONTROL_ALLOW_ORIGIN,
-        "https://fractic.io".parse().unwrap(),
+        HeaderValue::from_static("https://fractic.io"),
     );
     headers.insert(
         ACCESS_CONTROL_ALLOW_HEADERS,
-        "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent"
-            .parse()
-            .unwrap(),
+        HeaderValue::from_static(
+            "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent",
+        ),
     );
     headers.insert(
         ACCESS_CONTROL_ALLOW_METHODS,
-        "GET, POST, PUT, DELETE".parse().unwrap(),
+        HeaderValue::from_static("GET, POST, PUT, DELETE"),
     );
-    headers.insert(ACCESS_CONTROL_ALLOW_CREDENTIALS, "true".parse().unwrap());
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_CREDENTIALS,
+        HeaderValue::from_static("true"),
+    );
     headers
 }
 
