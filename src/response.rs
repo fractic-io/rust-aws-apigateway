@@ -1,3 +1,5 @@
+use std::io::Write as _;
+
 use aws_lambda_events::{
     apigw::ApiGatewayProxyResponse,
     encodings::Body,
@@ -9,22 +11,36 @@ use aws_lambda_events::{
         HeaderMap,
     },
 };
+use base64::Engine as _;
+use flate2::{write::GzEncoder, Compression};
 use fractic_server_error::ServerError;
 use lambda_runtime::Error;
 use serde::Serialize;
 
-use crate::constants::{INTERNAL_SERVER_ERROR_MSG, UNAUTHORIZED_ERROR_MSG};
+use crate::{
+    constants::{INTERNAL_SERVER_ERROR_MSG, UNAUTHORIZED_ERROR_MSG},
+    EncodingError,
+};
 
 // API Gateway response utils.
 // --------------------------------------------------
 
-// All API responses are wrapped in the following wrapper:
+/// Wrapper for all API responses.
 #[derive(Debug, Serialize)]
 struct ResponseWrapper {
     ok: bool,
-    // If OK, response data.
+
+    /// If OK, response data, encoded as JSON -> gzip -> base64.
+    ///
+    /// TODO:
+    ///     Currently, all responses are encoded in standard gzip+base64, but
+    ///     this library should eventually support various encoding options,
+    ///     specifyable by query parameter, and perhaps even versioning of some
+    ///     sort.
+    ///
     data: Option<String>,
-    // If not OK, error message safe to show to user.
+
+    /// If not OK, error message safe to show to user.
     error: Option<String>,
 }
 
@@ -42,16 +58,17 @@ pub fn build_result<T>(data: T) -> Result<ApiGatewayProxyResponse, Error>
 where
     T: serde::Serialize,
 {
-    let payload = ResponseWrapper {
+    let payload = gzip_base64(&serde_json::to_vec(&data)?).map_err(|e| e.to_string())?;
+    let wrapper = ResponseWrapper {
         ok: true,
-        data: Some(serde_json::to_string(&data)?),
+        data: Some(payload),
         error: None,
     };
     let resp = ApiGatewayProxyResponse {
         status_code: 200,
         headers: build_headers(),
         multi_value_headers: Default::default(),
-        body: Some(serde_json::to_string(&payload)?.into()),
+        body: Some(serde_json::to_string(&wrapper)?.into()),
         is_base64_encoded: false,
     };
     Ok(resp)
@@ -77,7 +94,7 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
         println!("NOTE: Forwarding error to client. Returning 200 response.");
         // Since the data field will be set to None, we need to specify the
         // correct type T, so just use int.
-        let payload = ResponseWrapper {
+        let wrapper = ResponseWrapper {
             ok: false,
             data: None,
             error: Some(public_msg.into()),
@@ -89,7 +106,7 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
             status_code: 200,
             headers: build_headers(),
             multi_value_headers: Default::default(),
-            body: Some(serde_json::to_string(&payload)?.into()),
+            body: Some(serde_json::to_string(&wrapper)?.into()),
             is_base64_encoded: false,
         })
     };
@@ -135,6 +152,16 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
 
 // Helper functions.
 // --------------------------------------------------
+
+fn gzip_base64(input: &[u8]) -> Result<String, ServerError> {
+    let mut e = GzEncoder::new(Vec::new(), Compression::default());
+    e.write_all(input)
+        .map_err(|e| EncodingError::with_debug("gzip write", &e))?;
+    let gz = e
+        .finish()
+        .map_err(|e| EncodingError::with_debug("gzip finish", &e))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(gz))
+}
 
 fn build_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -190,6 +217,7 @@ mod tests {
 
     use super::*;
     use aws_lambda_events::encodings::Body;
+    use flate2::read::GzDecoder;
     use fractic_server_error::{define_client_error, define_user_error, CriticalError};
     use serde::Deserialize;
     use serde_json::Value;
@@ -197,6 +225,18 @@ mod tests {
     #[derive(Debug, Serialize, Deserialize)]
     struct MockResponseData {
         key: String,
+    }
+
+    fn decode(payload: &str) -> String {
+        use std::io::Read;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("failed to decode base64 payload");
+        let mut gz = GzDecoder::new(&decoded[..]);
+        let mut s = String::new();
+        gz.read_to_string(&mut s)
+            .expect("failed to decompress gzip payload");
+        s
     }
 
     #[test]
@@ -211,7 +251,7 @@ mod tests {
 
         assert_eq!(result.status_code, 200);
         assert_eq!(body["ok"].as_bool().unwrap(), true);
-        assert_eq!(body["data"].as_str().unwrap(), "\"Test string.\"");
+        assert_eq!(decode(body["data"].as_str().unwrap()), "\"Test string.\"");
         assert_eq!(body["error"].is_null(), true);
     }
 
@@ -230,7 +270,7 @@ mod tests {
         assert_eq!(result.status_code, 200);
         assert_eq!(body["ok"].as_bool().unwrap(), true);
         assert_eq!(
-            serde_json::from_str::<MockResponseData>(&body["data"].as_str().unwrap())
+            serde_json::from_str::<MockResponseData>(&decode(body["data"].as_str().unwrap()))
                 .unwrap()
                 .key,
             "Test value."
