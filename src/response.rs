@@ -95,7 +95,7 @@ pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error>
             LoggingLevel::Warning => println!("WARNING\n{}", error),
             LoggingLevel::Info => println!("INFO\n{}", error),
         }
-        println!("NOTE: Forwarding error to client. Returning 200 response.");
+        println!("NOTE: Forwarding to client. Returning 200 response.");
         let wrapper = ResponseWrapper {
             ok: false,
             data: None,
