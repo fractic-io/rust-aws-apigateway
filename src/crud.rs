@@ -1,15 +1,15 @@
 use aws_lambda_events::apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse};
 use aws_lambda_events::http::Method;
-use fractic_aws_dynamo::DynamoCtxView;
 use fractic_aws_dynamo::errors::DynamoNotFound;
 use fractic_aws_dynamo::schema::{DynamoObject, PkSk};
 use fractic_aws_dynamo::util::DynamoUtil;
+use fractic_aws_dynamo::DynamoCtxView;
 use fractic_server_error::CriticalError;
 use fractic_server_error::ServerError;
 use lambda_runtime::Error;
 use lambda_runtime::LambdaEvent;
 
-use crate::{InvalidRequestError, build_error, build_result, parse_request_data};
+use crate::{build_error, build_result, parse_request_data, InvalidRequestError};
 
 pub struct CrudRouteScaffolding {
     dynamo_util: DynamoUtil,
@@ -111,10 +111,7 @@ impl CrudRouteScaffolding {
         parent_id: PkSk,
         data: T::Data,
     ) -> Result<ObjectCreatedResponseData, ServerError> {
-        let written_obj = self
-            .dynamo_util
-            .create_item::<T>(parent_id, data, None)
-            .await?;
+        let written_obj = self.dynamo_util.create_item::<T>(parent_id, data).await?;
         Ok(ObjectCreatedResponseData {
             created_id: written_obj.id().clone(),
         })
