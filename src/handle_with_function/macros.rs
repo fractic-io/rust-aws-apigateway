@@ -10,13 +10,10 @@ macro_rules! aws_lambda_handle_with_function {
             };
             match $crate::parse_request_data::<$request_data_type>(&event.payload) {
                 Ok(obj) => match $validator(&obj, metadata) {
-                    Ok(_) => match $func(obj).await {
-                        Ok(result) => $crate::build_ok(result),
-                        Err(func_error) => $crate::build_err(func_error),
-                    },
-                    Err(validation_error) => $crate::build_err(validation_error),
+                    Ok(_) => $crate::build_result($func(obj).await),
+                    e @ Err(_) => $crate::build_result(e),
                 },
-                Err(request_parsing_error) => $crate::build_err(request_parsing_error),
+                e @ Err(_) => $crate::build_result(e),
             }
         }
         $crate::aws_lambda_handle_raw!(__handler);
@@ -27,14 +24,11 @@ macro_rules! aws_lambda_handle_with_function {
         ) -> Result<aws_lambda_events::apigw::ApiGatewayProxyResponse, lambda_runtime::Error> {
             let metadata = match $crate::parse_request_metadata(&event.payload) {
                 Ok(m) => m,
-                Err(e) => return $crate::build_err(e),
+                e @ Err(_) => return $crate::build_result(e),
             };
             match $validator(metadata) {
-                Ok(_) => match $func().await {
-                    Ok(result) => $crate::build_ok(result),
-                    Err(func_error) => $crate::build_err(func_error),
-                },
-                Err(validation_error) => $crate::build_err(validation_error),
+                Ok(_) => $crate::build_result($func().await),
+                e @ Err(_) => $crate::build_result(e),
             }
         }
         $crate::aws_lambda_handle_raw!(__handler);
@@ -45,7 +39,7 @@ macro_rules! aws_lambda_handle_with_function {
         ) -> Result<ApiGatewayProxyResponse, lambda_runtime::Error> {
             match $func(event.payload.headers, event.payload.body).await {
                 Ok(result) => Ok($crate::build_simple(result)),
-                Err(func_error) => $crate::build_err(func_error),
+                e @ Err(_) => $crate::build_result(e),
             }
         }
         $crate::aws_lambda_handle_raw!(__handler);

@@ -58,7 +58,17 @@ pub fn build_simple(data: impl Into<Body>) -> ApiGatewayProxyResponse {
     }
 }
 
-pub fn build_ok<T>(data: T) -> Result<ApiGatewayProxyResponse, Error>
+pub fn build_result<T>(result: Result<T, ServerError>) -> Result<ApiGatewayProxyResponse, Error>
+where
+    T: serde::Serialize,
+{
+    match result {
+        Ok(data) => build_ok(data),
+        Err(error) => build_err(error),
+    }
+}
+
+pub(crate) fn build_ok<T>(data: T) -> Result<ApiGatewayProxyResponse, Error>
 where
     T: serde::Serialize,
 {
@@ -78,7 +88,7 @@ where
     Ok(resp)
 }
 
-pub fn build_err(error: ServerError) -> Result<ApiGatewayProxyResponse, Error> {
+pub(crate) fn build_err(error: ServerError) -> Result<ApiGatewayProxyResponse, Error> {
     enum LoggingLevel {
         Error,
         Warning,
