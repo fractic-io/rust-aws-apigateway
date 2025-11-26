@@ -13,7 +13,7 @@ use crate::{
     errors::InvalidRequestError,
     shared::{
         request_processing::parse_request_data,
-        response_building::{build_error, build_result},
+        response_building::{build_err, build_ok},
     },
 };
 
@@ -51,23 +51,23 @@ impl CrudRouteScaffolding {
         match Self::get_and_verify_request_properties::<T>(&event) {
             Ok(RequestProperties::<T>::Create { parent_id, data }) => {
                 match self.create::<T>(parent_id, data).await {
-                    Ok(result) => build_result(result),
-                    Err(error) => build_error(error),
+                    Ok(result) => build_ok(result),
+                    Err(error) => build_err(error),
                 }
             }
             Ok(RequestProperties::<T>::Read { id }) => match self.read::<T>(id).await {
-                Ok(result) => build_result(result),
-                Err(error) => build_error(error),
+                Ok(result) => build_ok(result),
+                Err(error) => build_err(error),
             },
             Ok(RequestProperties::<T>::Update { object }) => match self.update::<T>(object).await {
-                Ok(result) => build_result(result),
-                Err(error) => build_error(error),
+                Ok(result) => build_ok(result),
+                Err(error) => build_err(error),
             },
             Ok(RequestProperties::<T>::Delete { id }) => match self.delete::<T>(id).await {
-                Ok(result) => build_result(result),
-                Err(error) => build_error(error),
+                Ok(result) => build_ok(result),
+                Err(error) => build_err(error),
             },
-            Err(e) => build_error(e),
+            Err(e) => build_err(e),
         }
     }
 

@@ -12,7 +12,7 @@ use crate::{
     errors::{InvalidRouteError, UnauthorizedError},
     shared::{
         request_processing::{parse_request_metadata, RequestMetadata},
-        response_building::build_error,
+        response_building::build_err,
     },
 };
 
@@ -70,7 +70,7 @@ impl RoutingConfig {
     ) -> Result<ApiGatewayProxyResponse, Error> {
         let metadata = match parse_request_metadata(&event.payload) {
             Ok(m) => m,
-            Err(e) => return build_error(e),
+            Err(e) => return build_err(e),
         };
 
         let route_search = self
@@ -78,7 +78,7 @@ impl RoutingConfig {
             .or_else(|| self.find_crud_spec(&event));
         let (handler, access_level) = match route_search {
             Some((handler, access_level)) => (handler, access_level),
-            None => return build_error(InvalidRouteError::new(event.payload.path)),
+            None => return build_err(InvalidRouteError::new(event.payload.path)),
         };
 
         let is_authenticated_for_route = match access_level {
@@ -91,7 +91,7 @@ impl RoutingConfig {
         if is_authenticated_for_route {
             handler(event, metadata).await
         } else {
-            build_error(UnauthorizedError::new())
+            build_err(UnauthorizedError::new())
         }
     }
 

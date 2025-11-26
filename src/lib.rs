@@ -42,6 +42,6 @@ pub use handle_with_router::std::crud_specs::*;
 pub use handle_with_router::std::function_specs::*;
 pub use handle_with_router::std::validators::*;
 pub use shared::request_processing::RequestMetadata;
-pub use shared::response_building::{build_error, build_result, build_simple};
+pub use shared::response_building::{build_err, build_ok, build_simple};
 
 // ---------------------------------------------------------------------------
