@@ -180,7 +180,8 @@ where
     pub read_access: OwnedAccess,
     pub update_access: OwnedAccess,
     pub delete_access: OwnedAccess,
-    owner_of: Box<dyn Fn(&T) -> String + Send + Sync>,
+    owner_of_id: Box<dyn Fn(&PkSk) -> Option<String> + Send + Sync>,
+    owner_of_parent_id: Box<dyn Fn(&PkSk) -> Option<String> + Send + Sync>,
     handler: BoxedCrudHandler<T, O>,
     verifiers: Vec<Box<dyn Verifier>>,
 }
@@ -190,16 +191,18 @@ where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    pub fn new<H, Fut, FOwner>(
+    pub fn new<H, Fut, FOwnerId, FOwnerParentId>(
         create_access: OwnedAccess,
         read_access: OwnedAccess,
         update_access: OwnedAccess,
         delete_access: OwnedAccess,
-        owner_of: FOwner,
+        owner_of_id: FOwnerId,
+        owner_of_parent_id: FOwnerParentId,
         handler: H,
     ) -> Self
     where
-        FOwner: Fn(&T) -> String + Send + Sync + 'static,
+        FOwnerId: Fn(&PkSk) -> Option<String> + Send + Sync + 'static,
+        FOwnerParentId: Fn(&PkSk) -> Option<String> + Send + Sync + 'static,
         H: Fn(CrudOperation<T>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
@@ -208,7 +211,8 @@ where
             read_access,
             update_access,
             delete_access,
-            owner_of: Box::new(owner_of),
+            owner_of_id: Box::new(owner_of_id),
+            owner_of_parent_id: Box::new(owner_of_parent_id),
             handler: Box::new(move |op| Box::pin(handler(op))),
             verifiers: Vec::new(),
         }
@@ -252,7 +256,12 @@ where
                     Ok(d) => d,
                     Err(e) => return build_err(e),
                 };
-                let authorized = is_allowed_owned_access(&metadata, &self.create_access, None);
+                let owner = match parent_id {
+                    Some(ref pid) => (self.owner_of_parent_id)(pid),
+                    None => (self.owner_of_parent_id)(&PkSk::root()),
+                };
+                let authorized =
+                    is_allowed_owned_access(&metadata, &self.create_access, owner.as_deref());
                 (
                     authorized,
                     CrudOperation::Create {
@@ -267,7 +276,9 @@ where
                     Ok(id) => id,
                     Err(e) => return build_err(e),
                 };
-                let authorized = is_allowed_owned_access(&metadata, &self.read_access, None);
+                let owner = (self.owner_of_id)(&id);
+                let authorized =
+                    is_allowed_owned_access(&metadata, &self.read_access, owner.as_deref());
                 (authorized, CrudOperation::Read { id })
             }
             &Method::PUT => {
@@ -275,9 +286,9 @@ where
                     Ok(i) => i,
                     Err(e) => return build_err(e),
                 };
-                let owner = (self.owner_of)(&item);
+                let owner = (self.owner_of_id)(item.id());
                 let authorized =
-                    is_allowed_owned_access(&metadata, &self.update_access, Some(owner.as_str()));
+                    is_allowed_owned_access(&metadata, &self.update_access, owner.as_deref());
                 (authorized, CrudOperation::Update { item })
             }
             &Method::DELETE => {
@@ -285,7 +296,9 @@ where
                     Ok(id) => id,
                     Err(e) => return build_err(e),
                 };
-                let authorized = is_allowed_owned_access(&metadata, &self.delete_access, None);
+                let owner = (self.owner_of_id)(&id);
+                let authorized =
+                    is_allowed_owned_access(&metadata, &self.delete_access, owner.as_deref());
                 (authorized, CrudOperation::Delete { id })
             }
             _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
