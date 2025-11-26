@@ -20,10 +20,28 @@ mod handle_with_router {
         pub mod validators;
     }
 }
+mod shared {
+    pub mod auth_utils;
+    pub mod request_processing;
+    pub mod response_building;
+}
+
+mod constants;
+mod errors;
+
+//
+// ===========================================================================
+// External interface:
+// ---------------------------------------------------------------------------
 
 // (Macros are automatically exported at crate root.)
 
+pub use errors::*;
 pub use handle_with_router::routing_config::*;
 pub use handle_with_router::std::crud_specs::*;
 pub use handle_with_router::std::function_specs::*;
 pub use handle_with_router::std::validators::*;
+pub use shared::request_processing::RequestMetadata;
+pub use shared::response_building::{build_error, build_result, build_simple};
+
+// ---------------------------------------------------------------------------

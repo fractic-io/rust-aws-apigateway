@@ -19,7 +19,7 @@ use serde::Serialize;
 
 use crate::{
     constants::{INTERNAL_SERVER_ERROR_MSG, UNAUTHORIZED_ERROR_MSG},
-    EncodingError,
+    errors::EncodingError,
 };
 
 // API Gateway response utils.
@@ -230,7 +230,7 @@ fn build_headers(content_type: ContentType) -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::UnauthorizedError;
+    use crate::errors::UnauthorizedError;
 
     use super::*;
     use aws_lambda_events::encodings::Body;

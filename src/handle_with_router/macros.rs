@@ -1,18 +1,7 @@
 #[macro_export]
 macro_rules! aws_lambda_handle_with_router {
     ($config:expr) => {
-        #[tokio::main]
-        async fn main() -> Result<(), lambda_runtime::Error> {
-            tracing_subscriber::fmt()
-                .with_max_level(tracing::Level::INFO)
-                // Disable printing module name in every log line.
-                .with_target(false)
-                // Disable printing time since CloudWatch already logs ingestion time.
-                .without_time()
-                .init();
-
-            lambda_runtime::run(lambda_runtime::service_fn(|e| handle_route($config, e))).await
-        }
+        $crate::aws_lambda_handle_raw!(move |e| $config.handle(e));
     };
 }
 

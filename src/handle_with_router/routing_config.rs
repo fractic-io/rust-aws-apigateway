@@ -10,10 +10,11 @@ use std::pin::Pin;
 
 use crate::{
     errors::{InvalidRouteError, UnauthorizedError},
-    request::{parse_request_metadata, RequestMetadata},
+    shared::{
+        request_processing::{parse_request_metadata, RequestMetadata},
+        response_building::build_error,
+    },
 };
-
-use super::response::build_error;
 
 // API Gateway routing config.
 // --------------------------------------------------
@@ -62,73 +63,76 @@ where
     Box::new(move |e, m| Box::pin(f(e, m)))
 }
 
-fn find_function_route<'a>(
-    config: &'a RoutingConfig,
-    event: &LambdaEvent<ApiGatewayProxyRequest>,
-) -> Option<(&'a RouteHandler, &'a AccessLevel)> {
-    let method = &event.payload.http_method;
-    if method == Method::POST {
+impl RoutingConfig {
+    pub async fn handle(
+        &self,
+        event: LambdaEvent<ApiGatewayProxyRequest>,
+    ) -> Result<ApiGatewayProxyResponse, Error> {
+        let metadata = match parse_request_metadata(&event.payload) {
+            Ok(m) => m,
+            Err(e) => return build_error(e),
+        };
+
+        let route_search = self
+            .find_function_spec(&event)
+            .or_else(|| self.find_crud_spec(&event));
+        let (handler, access_level) = match route_search {
+            Some((handler, access_level)) => (handler, access_level),
+            None => return build_error(InvalidRouteError::new(event.payload.path)),
+        };
+
+        let is_authenticated_for_route = match access_level {
+            AccessLevel::Guest => true,
+            AccessLevel::User => metadata.is_authenticated,
+            AccessLevel::Admin => metadata.is_authenticated && metadata.is_admin,
+            AccessLevel::None => false,
+        };
+
+        if is_authenticated_for_route {
+            handler(event, metadata).await
+        } else {
+            build_error(UnauthorizedError::new())
+        }
+    }
+
+    fn find_function_spec<'a>(
+        &'a self,
+        event: &LambdaEvent<ApiGatewayProxyRequest>,
+    ) -> Option<(&'a RouteHandler, &'a AccessLevel)> {
+        let method = &event.payload.http_method;
+        if method == Method::POST {
+            event
+                .payload
+                .path_parameters
+                .get("proxy")
+                .and_then(|proxy| self.function_routes.get(proxy))
+                .map(|route| (&route.handler, &route.access_level))
+        } else {
+            None
+        }
+    }
+
+    fn find_crud_spec<'a>(
+        &'a self,
+        event: &LambdaEvent<ApiGatewayProxyRequest>,
+    ) -> Option<(&'a RouteHandler, &'a AccessLevel)> {
+        let method = &event.payload.http_method;
         event
             .payload
             .path_parameters
             .get("proxy")
-            .and_then(|proxy| config.function_routes.get(proxy))
-            .map(|route| (&route.handler, &route.access_level))
-    } else {
-        None
-    }
-}
-
-fn find_crud_route<'a>(
-    config: &'a RoutingConfig,
-    event: &LambdaEvent<ApiGatewayProxyRequest>,
-) -> Option<(&'a RouteHandler, &'a AccessLevel)> {
-    let method = &event.payload.http_method;
-    event
-        .payload
-        .path_parameters
-        .get("proxy")
-        .and_then(|proxy| config.crud_routes.get(proxy))
-        .map(|route| {
-            (
-                &route.handler,
-                match method {
-                    &Method::POST => &route.create_access_level,
-                    &Method::GET => &route.read_access_level,
-                    &Method::PUT => &route.update_access_level,
-                    &Method::DELETE => &route.delete_access_level,
-                    _ => &AccessLevel::None,
-                },
-            )
-        })
-}
-
-pub async fn handle_route(
-    config: RoutingConfig,
-    event: LambdaEvent<ApiGatewayProxyRequest>,
-) -> Result<ApiGatewayProxyResponse, Error> {
-    let metadata = match parse_request_metadata(&event.payload) {
-        Ok(m) => m,
-        Err(e) => return build_error(e),
-    };
-
-    let route_search =
-        find_function_route(&config, &event).or_else(|| find_crud_route(&config, &event));
-    let (handler, access_level) = match route_search {
-        Some((handler, access_level)) => (handler, access_level),
-        None => return build_error(InvalidRouteError::new(event.payload.path)),
-    };
-
-    let is_authenticated_for_route = match access_level {
-        AccessLevel::Guest => true,
-        AccessLevel::User => metadata.is_authenticated,
-        AccessLevel::Admin => metadata.is_authenticated && metadata.is_admin,
-        AccessLevel::None => false,
-    };
-
-    if is_authenticated_for_route {
-        handler(event, metadata).await
-    } else {
-        build_error(UnauthorizedError::new())
+            .and_then(|proxy| self.crud_routes.get(proxy))
+            .map(|route| {
+                (
+                    &route.handler,
+                    match method {
+                        &Method::POST => &route.create_access_level,
+                        &Method::GET => &route.read_access_level,
+                        &Method::PUT => &route.update_access_level,
+                        &Method::DELETE => &route.delete_access_level,
+                        _ => &AccessLevel::None,
+                    },
+                )
+            })
     }
 }

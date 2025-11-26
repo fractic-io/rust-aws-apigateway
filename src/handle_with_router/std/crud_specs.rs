@@ -9,7 +9,13 @@ use fractic_server_error::ServerError;
 use lambda_runtime::Error;
 use lambda_runtime::LambdaEvent;
 
-use crate::{build_error, build_result, parse_request_data, InvalidRequestError};
+use crate::{
+    errors::InvalidRequestError,
+    shared::{
+        request_processing::parse_request_data,
+        response_building::{build_error, build_result},
+    },
+};
 
 pub struct CrudRouteScaffolding {
     dynamo_util: DynamoUtil,
