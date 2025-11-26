@@ -1,140 +1,331 @@
-use aws_lambda_events::apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse};
-use aws_lambda_events::http::Method;
-use fractic_aws_dynamo::errors::DynamoNotFound;
+use std::pin::Pin;
+
+use aws_lambda_events::{
+    apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse},
+    http::Method,
+};
 use fractic_aws_dynamo::schema::{DynamoObject, PkSk};
-use fractic_aws_dynamo::util::DynamoUtil;
-use fractic_aws_dynamo::DynamoCtxView;
-use fractic_server_error::CriticalError;
-use fractic_server_error::ServerError;
+use fractic_server_error::{CriticalError, ServerError};
 use lambda_runtime::Error;
-use lambda_runtime::LambdaEvent;
+use serde::de::DeserializeOwned;
 
 use crate::{
     errors::InvalidRequestError,
+    handle_with_router::routing_config::{CrudSpec, OwnedAccess},
     shared::{
-        request_processing::parse_request_data,
-        response_building::{build_err, build_ok},
+        request_processing::{parse_request_data, parse_request_metadata},
+        response_building::{build_err, build_result},
     },
 };
 
-pub struct CrudRouteScaffolding {
-    dynamo_util: DynamoUtil,
-}
+use super::validators::Verifier;
 
-#[derive(Debug)]
-enum RequestProperties<T: DynamoObject> {
+pub enum CrudOperation<T> {
+    Create { item: T },
     Read { id: PkSk },
-    Create { parent_id: PkSk, data: T::Data },
-    Update { object: T },
+    Update { item: T },
     Delete { id: PkSk },
 }
 
-// Response data returned if an object was created:
-#[derive(Debug, serde::Serialize)]
-struct ObjectCreatedResponseData {
-    created_id: PkSk,
+type BoxedCrudHandler<T, O> = Box<
+    dyn Fn(
+            CrudOperation<T>,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<O, ServerError>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Non-owned CRUD spec with per-operation access controls.
+pub struct Crud<T, O>
+where
+    T: DynamoObject + DeserializeOwned + Send + 'static,
+    O: serde::Serialize + Send + 'static,
+{
+    pub create_access: crate::handle_with_router::routing_config::Access,
+    pub read_access: crate::handle_with_router::routing_config::Access,
+    pub update_access: crate::handle_with_router::routing_config::Access,
+    pub delete_access: crate::handle_with_router::routing_config::Access,
+    handler: BoxedCrudHandler<T, O>,
+    verifiers: Vec<Box<dyn Verifier>>,
 }
 
-impl CrudRouteScaffolding {
-    pub async fn new(
-        ctx: &dyn DynamoCtxView,
-        table: impl Into<String>,
-    ) -> Result<Self, ServerError> {
-        let dynamo_util = DynamoUtil::new(ctx, table).await?;
-        Ok(CrudRouteScaffolding { dynamo_util })
+impl<T, O> Crud<T, O>
+where
+    T: DynamoObject + DeserializeOwned + Send + 'static,
+    O: serde::Serialize + Send + 'static,
+{
+    pub fn new<H, Fut>(
+        create_access: crate::handle_with_router::routing_config::Access,
+        read_access: crate::handle_with_router::routing_config::Access,
+        update_access: crate::handle_with_router::routing_config::Access,
+        delete_access: crate::handle_with_router::routing_config::Access,
+        handler: H,
+    ) -> Self
+    where
+        H: Fn(CrudOperation<T>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
+    {
+        Self {
+            create_access,
+            read_access,
+            update_access,
+            delete_access,
+            handler: Box::new(move |op| Box::pin(handler(op))),
+            verifiers: Vec::new(),
+        }
     }
 
-    pub async fn handle_request<T: DynamoObject>(
+    pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
+        self.verifiers = verifiers;
+        self
+    }
+}
+
+impl<T, O> CrudSpec for Crud<T, O>
+where
+    T: DynamoObject + DeserializeOwned + Send + 'static,
+    O: serde::Serialize + Send + 'static,
+{
+    fn resolve(
         &self,
-        event: LambdaEvent<ApiGatewayProxyRequest>,
-    ) -> Result<ApiGatewayProxyResponse, Error> {
-        match Self::get_and_verify_request_properties::<T>(&event) {
-            Ok(RequestProperties::<T>::Create { parent_id, data }) => {
-                match self.create::<T>(parent_id, data).await {
-                    Ok(result) => build_ok(result),
-                    Err(error) => build_err(error),
+        request: &ApiGatewayProxyRequest,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ApiGatewayProxyResponse, Error>> + Send>>
+    {
+        let handler = &self.handler;
+        let create_access = &self.create_access;
+        let read_access = &self.read_access;
+        let update_access = &self.update_access;
+        let delete_access = &self.delete_access;
+        Box::pin(async move {
+            let metadata = match parse_request_metadata(request) {
+                Ok(m) => m,
+                Err(e) => return build_err(e),
+            };
+            let method = &request.http_method;
+            let (allowed, op) = match method {
+                &Method::POST => {
+                    let item = match parse_request_data::<T>(request) {
+                        Ok(i) => i,
+                        Err(e) => return build_err(e),
+                    };
+                    (
+                        is_allowed_access(&metadata, &create_access),
+                        CrudOperation::Create { item },
+                    )
                 }
+                &Method::GET => {
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    (
+                        is_allowed_access(&metadata, &read_access),
+                        CrudOperation::Read { id },
+                    )
+                }
+                &Method::PUT => {
+                    let item = match parse_request_data::<T>(request) {
+                        Ok(i) => i,
+                        Err(e) => return build_err(e),
+                    };
+                    (
+                        is_allowed_access(&metadata, &update_access),
+                        CrudOperation::Update { item },
+                    )
+                }
+                &Method::DELETE => {
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    (
+                        is_allowed_access(&metadata, &delete_access),
+                        CrudOperation::Delete { id },
+                    )
+                }
+                _ => {
+                    return build_err(CriticalError::new("unsupported HTTP method for CRUD route"))
+                }
+            };
+            if !allowed {
+                return build_err(crate::errors::UnauthorizedError::new());
             }
-            Ok(RequestProperties::<T>::Read { id }) => match self.read::<T>(id).await {
-                Ok(result) => build_ok(result),
-                Err(error) => build_err(error),
-            },
-            Ok(RequestProperties::<T>::Update { object }) => match self.update::<T>(object).await {
-                Ok(result) => build_ok(result),
-                Err(error) => build_err(error),
-            },
-            Ok(RequestProperties::<T>::Delete { id }) => match self.delete::<T>(id).await {
-                Ok(result) => build_ok(result),
-                Err(error) => build_err(error),
-            },
-            Err(e) => build_err(e),
-        }
-    }
-
-    fn get_and_verify_request_properties<T: DynamoObject>(
-        event: &LambdaEvent<ApiGatewayProxyRequest>,
-    ) -> Result<RequestProperties<T>, ServerError> {
-        match &event.payload.http_method {
-            &Method::POST => Ok(RequestProperties::<T>::Create {
-                parent_id: PkSk::from_string(&Self::get_and_verify_query_param(
-                    &event,
-                    "parent_id",
-                )?)?,
-                data: parse_request_data::<T::Data>(&event.payload)?,
-            }),
-            &Method::GET => Ok(RequestProperties::<T>::Read {
-                id: PkSk::from_string(&Self::get_and_verify_query_param(&event, "id")?)?,
-            }),
-            &Method::PUT => Ok(RequestProperties::<T>::Update {
-                object: parse_request_data::<T>(&event.payload)?,
-            }),
-            &Method::DELETE => Ok(RequestProperties::<T>::Delete {
-                id: PkSk::from_string(&Self::get_and_verify_query_param(&event, "id")?)?,
-            }),
-            _ => Err(CriticalError::new(
-                "CRUD routes should only be called with POST, GET, PUT, or DELETE",
-            )),
-        }
-    }
-
-    fn get_and_verify_query_param(
-        event: &LambdaEvent<ApiGatewayProxyRequest>,
-        param: &str,
-    ) -> Result<String, ServerError> {
-        event
-            .payload
-            .query_string_parameters
-            .first(param)
-            .ok_or(InvalidRequestError::new(&format!(
-                "query parameter '{}' is required",
-                param
-            )))
-            .map(|s| s.to_string())
-    }
-
-    async fn create<T: DynamoObject>(
-        &self,
-        parent_id: PkSk,
-        data: T::Data,
-    ) -> Result<ObjectCreatedResponseData, ServerError> {
-        let written_obj = self.dynamo_util.create_item::<T>(parent_id, data).await?;
-        Ok(ObjectCreatedResponseData {
-            created_id: written_obj.id().clone(),
+            build_result(handler(op).await)
         })
     }
+}
 
-    async fn read<T: DynamoObject>(&self, id: PkSk) -> Result<T, ServerError> {
-        match self.dynamo_util.get_item(id).await? {
-            Some(object) => Ok(object),
-            None => Err(DynamoNotFound::new()),
+/// Owned CRUD spec with per-operation access controls and ownership extraction.
+pub struct OwnedCrud<T, O>
+where
+    T: DynamoObject + DeserializeOwned + Send + 'static,
+    O: serde::Serialize + Send + 'static,
+{
+    pub create_access: OwnedAccess,
+    pub read_access: OwnedAccess,
+    pub update_access: OwnedAccess,
+    pub delete_access: OwnedAccess,
+    owner_of: Box<dyn Fn(&T) -> String + Send + Sync>,
+    handler: BoxedCrudHandler<T, O>,
+    verifiers: Vec<Box<dyn Verifier>>,
+}
+
+impl<T, O> OwnedCrud<T, O>
+where
+    T: DynamoObject + DeserializeOwned + Send + 'static,
+    O: serde::Serialize + Send + 'static,
+{
+    pub fn new<H, Fut, FOwner>(
+        create_access: OwnedAccess,
+        read_access: OwnedAccess,
+        update_access: OwnedAccess,
+        delete_access: OwnedAccess,
+        owner_of: FOwner,
+        handler: H,
+    ) -> Self
+    where
+        FOwner: Fn(&T) -> String + Send + Sync + 'static,
+        H: Fn(CrudOperation<T>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
+    {
+        Self {
+            create_access,
+            read_access,
+            update_access,
+            delete_access,
+            owner_of: Box::new(owner_of),
+            handler: Box::new(move |op| Box::pin(handler(op))),
+            verifiers: Vec::new(),
         }
     }
 
-    async fn update<T: DynamoObject>(&self, object: T) -> Result<(), ServerError> {
-        self.dynamo_util.update_item(&object).await
+    pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
+        self.verifiers = verifiers;
+        self
     }
+}
 
-    async fn delete<T: DynamoObject>(&self, id: PkSk) -> Result<(), ServerError> {
-        self.dynamo_util.delete_item::<T>(id).await
+impl<T, O> CrudSpec for OwnedCrud<T, O>
+where
+    T: DynamoObject + DeserializeOwned + Send + 'static,
+    O: serde::Serialize + Send + 'static,
+{
+    fn resolve(
+        &self,
+        request: &ApiGatewayProxyRequest,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ApiGatewayProxyResponse, Error>> + Send>>
+    {
+        let handler = &self.handler;
+        let create_access = &self.create_access;
+        let read_access = &self.read_access;
+        let update_access = &self.update_access;
+        let delete_access = &self.delete_access;
+        let owner_of = &self.owner_of;
+        Box::pin(async move {
+            let metadata = match parse_request_metadata(request) {
+                Ok(m) => m,
+                Err(e) => return build_err(e),
+            };
+            if !metadata.is_authenticated {
+                return build_err(crate::errors::UnauthorizedError::new());
+            }
+            let method = &request.http_method;
+            let (authorized, op) = match method {
+                &Method::POST => {
+                    let item = match parse_request_data::<T>(request) {
+                        Ok(i) => i,
+                        Err(e) => return build_err(e),
+                    };
+                    let authorized =
+                        is_authorized_owned(&metadata, create_access, Some(&item), owner_of);
+                    (authorized, CrudOperation::Create { item })
+                }
+                &Method::GET => {
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    let authorized =
+                        is_authorized_owned::<T>(&metadata, read_access, None, owner_of);
+                    (authorized, CrudOperation::Read { id })
+                }
+                &Method::PUT => {
+                    let item = match parse_request_data::<T>(request) {
+                        Ok(i) => i,
+                        Err(e) => return build_err(e),
+                    };
+                    let authorized =
+                        is_authorized_owned(&metadata, update_access, Some(&item), owner_of);
+                    (authorized, CrudOperation::Update { item })
+                }
+                &Method::DELETE => {
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    let authorized =
+                        is_authorized_owned::<T>(&metadata, delete_access, None, owner_of);
+                    (authorized, CrudOperation::Delete { id })
+                }
+                _ => {
+                    return build_err(CriticalError::new("unsupported HTTP method for CRUD route"))
+                }
+            };
+            if !authorized {
+                return build_err(crate::errors::UnauthorizedError::new());
+            }
+            build_result(handler(op).await)
+        })
+    }
+}
+
+fn get_required_id(request: &ApiGatewayProxyRequest) -> Result<PkSk, ServerError> {
+    request
+        .query_string_parameters
+        .first("id")
+        .ok_or(InvalidRequestError::new("query parameter 'id' is required"))
+        .and_then(|s| {
+            PkSk::from_string(s).map_err(|e| InvalidRequestError::with_debug("invalid id", &e))
+        })
+}
+
+fn is_allowed_access(
+    metadata: &crate::shared::request_processing::RequestMetadata,
+    access: &crate::handle_with_router::routing_config::Access,
+) -> bool {
+    match access {
+        crate::handle_with_router::routing_config::Access::Guest => true,
+        crate::handle_with_router::routing_config::Access::User => metadata.is_authenticated,
+        crate::handle_with_router::routing_config::Access::Admin => {
+            metadata.is_authenticated && metadata.is_admin
+        }
+        crate::handle_with_router::routing_config::Access::None => false,
+    }
+}
+
+fn is_authorized_owned<T>(
+    metadata: &crate::shared::request_processing::RequestMetadata,
+    access: &OwnedAccess,
+    item: Option<&T>,
+    owner_of: &Box<dyn Fn(&T) -> String + Send + Sync>,
+) -> bool {
+    match access {
+        OwnedAccess::OwnerOrAdmin => {
+            if metadata.is_admin {
+                true
+            } else if let (Some(item_ref), Some(sub)) = (item, &metadata.user_sub) {
+                sub == &owner_of(item_ref)
+            } else {
+                false
+            }
+        }
+        OwnedAccess::Owner => {
+            if let (Some(item_ref), Some(sub)) = (item, &metadata.user_sub) {
+                sub == &owner_of(item_ref)
+            } else {
+                false
+            }
+        }
+        OwnedAccess::None => false,
     }
 }
