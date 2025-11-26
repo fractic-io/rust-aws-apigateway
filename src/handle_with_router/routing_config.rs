@@ -1,50 +1,64 @@
 use std::collections::HashMap;
 
+use async_trait::async_trait;
 use aws_lambda_events::{
     apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse},
     http::Method,
 };
-use core::future::Future;
 use lambda_runtime::{Error, LambdaEvent};
-use std::pin::Pin;
 
-use crate::{errors::InvalidRouteError, shared::response_building::build_err};
+use crate::{
+    errors::InvalidRouteError,
+    shared::{request_processing::RequestMetadata, response_building::build_err},
+};
 
 // API Gateway routing config.
 // --------------------------------------------------
 
 /// Access control for non-owned routes.
 pub enum Access {
+    /// Any user, including unauthenticated users.
     Guest,
+    /// Any authenticated user.
     User,
+    /// Only admin users.
     Admin,
+    /// All access is denied.
     None,
 }
 
 /// Access control for owned routes.
 pub enum OwnedAccess {
-    /// Only the owner of the resource can access.
+    /// Any user, including unauthenticated users.
+    Guest,
+    /// Any authenticated user.
+    User,
+    /// Only the resource owner.
     Owner,
-    /// The owner or an administrator can access.
+    /// Only admin users.
+    Admin,
+    /// Owner or admin users.
     OwnerOrAdmin,
-    /// No access is allowed.
+    /// All access is denied.
     None,
 }
 
 /// Trait implemented by function route specifications.
+#[async_trait]
 pub trait FunctionSpec: Send + Sync {
-    fn resolve(
+    async fn resolve(
         &self,
         request: &ApiGatewayProxyRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<ApiGatewayProxyResponse, Error>> + Send>>;
+    ) -> Result<ApiGatewayProxyResponse, Error>;
 }
 
 /// Trait implemented by CRUD route specifications.
+#[async_trait]
 pub trait CrudSpec: Send + Sync {
-    fn resolve(
+    async fn resolve(
         &self,
         request: &ApiGatewayProxyRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<ApiGatewayProxyResponse, Error>> + Send>>;
+    ) -> Result<ApiGatewayProxyResponse, Error>;
 }
 
 pub struct RoutingConfig {
@@ -103,4 +117,43 @@ impl RoutingConfig {
 enum RouteSpecRef<'a> {
     Function(&'a dyn FunctionSpec),
     Crud(&'a dyn CrudSpec),
+}
+
+// Access helpers.
+// --------------------------------------------------
+
+pub(crate) fn is_allowed_access(metadata: &RequestMetadata, access: &Access) -> bool {
+    match access {
+        Access::Guest => true,
+        Access::User => metadata.is_authenticated,
+        Access::Admin => metadata.is_authenticated && metadata.is_admin,
+        Access::None => false,
+    }
+}
+
+pub(crate) fn is_allowed_owned_access(
+    metadata: &RequestMetadata,
+    access: &OwnedAccess,
+    owner: Option<&str>,
+) -> bool {
+    match access {
+        OwnedAccess::Guest => true,
+        OwnedAccess::User => metadata.is_authenticated,
+        OwnedAccess::Admin => metadata.is_authenticated && metadata.is_admin,
+        OwnedAccess::Owner => match (owner, &metadata.user_sub) {
+            (Some(owner_sub), Some(user_sub)) => owner_sub == user_sub,
+            _ => false,
+        },
+        OwnedAccess::OwnerOrAdmin => {
+            if metadata.is_authenticated && metadata.is_admin {
+                true
+            } else {
+                match (owner, &metadata.user_sub) {
+                    (Some(owner_sub), Some(user_sub)) => owner_sub == user_sub,
+                    _ => false,
+                }
+            }
+        }
+        OwnedAccess::None => false,
+    }
 }

@@ -1,5 +1,4 @@
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use aws_lambda_events::{
     apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse},
     http::Method,
@@ -8,10 +7,13 @@ use fractic_aws_dynamo::schema::{DynamoObject, PkSk};
 use fractic_server_error::{CriticalError, ServerError};
 use lambda_runtime::Error;
 use serde::de::DeserializeOwned;
+use std::pin::Pin;
 
 use crate::{
-    errors::InvalidRequestError,
-    handle_with_router::routing_config::{CrudSpec, OwnedAccess},
+    errors::{InvalidRequestError, UnauthorizedError},
+    handle_with_router::routing_config::{
+        is_allowed_access, is_allowed_owned_access, Access, CrudSpec, OwnedAccess,
+    },
     shared::{
         request_processing::{parse_request_data, parse_request_metadata},
         response_building::{build_err, build_result},
@@ -20,11 +22,21 @@ use crate::{
 
 use super::validators::Verifier;
 
-pub enum CrudOperation<T> {
-    Create { item: T },
-    Read { id: PkSk },
-    Update { item: T },
-    Delete { id: PkSk },
+pub enum CrudOperation<T: DynamoObject> {
+    Create {
+        parent_id: Option<PkSk>,
+        after: Option<PkSk>,
+        data: T::Data,
+    },
+    Read {
+        id: PkSk,
+    },
+    Update {
+        item: T,
+    },
+    Delete {
+        id: PkSk,
+    },
 }
 
 type BoxedCrudHandler<T, O> = Box<
@@ -41,10 +53,10 @@ where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    pub create_access: crate::handle_with_router::routing_config::Access,
-    pub read_access: crate::handle_with_router::routing_config::Access,
-    pub update_access: crate::handle_with_router::routing_config::Access,
-    pub delete_access: crate::handle_with_router::routing_config::Access,
+    pub create_access: Access,
+    pub read_access: Access,
+    pub update_access: Access,
+    pub delete_access: Access,
     handler: BoxedCrudHandler<T, O>,
     verifiers: Vec<Box<dyn Verifier>>,
 }
@@ -55,10 +67,10 @@ where
     O: serde::Serialize + Send + 'static,
 {
     pub fn new<H, Fut>(
-        create_access: crate::handle_with_router::routing_config::Access,
-        read_access: crate::handle_with_router::routing_config::Access,
-        update_access: crate::handle_with_router::routing_config::Access,
-        delete_access: crate::handle_with_router::routing_config::Access,
+        create_access: Access,
+        read_access: Access,
+        update_access: Access,
+        delete_access: Access,
         handler: H,
     ) -> Self
     where
@@ -81,77 +93,80 @@ where
     }
 }
 
+#[async_trait]
 impl<T, O> CrudSpec for Crud<T, O>
 where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    fn resolve(
+    async fn resolve(
         &self,
         request: &ApiGatewayProxyRequest,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ApiGatewayProxyResponse, Error>> + Send>>
-    {
-        let handler = &self.handler;
-        let create_access = &self.create_access;
-        let read_access = &self.read_access;
-        let update_access = &self.update_access;
-        let delete_access = &self.delete_access;
-        Box::pin(async move {
-            let metadata = match parse_request_metadata(request) {
-                Ok(m) => m,
-                Err(e) => return build_err(e),
-            };
-            let method = &request.http_method;
-            let (allowed, op) = match method {
-                &Method::POST => {
-                    let item = match parse_request_data::<T>(request) {
-                        Ok(i) => i,
-                        Err(e) => return build_err(e),
-                    };
-                    (
-                        is_allowed_access(&metadata, &create_access),
-                        CrudOperation::Create { item },
-                    )
-                }
-                &Method::GET => {
-                    let id = match get_required_id(request) {
-                        Ok(id) => id,
-                        Err(e) => return build_err(e),
-                    };
-                    (
-                        is_allowed_access(&metadata, &read_access),
-                        CrudOperation::Read { id },
-                    )
-                }
-                &Method::PUT => {
-                    let item = match parse_request_data::<T>(request) {
-                        Ok(i) => i,
-                        Err(e) => return build_err(e),
-                    };
-                    (
-                        is_allowed_access(&metadata, &update_access),
-                        CrudOperation::Update { item },
-                    )
-                }
-                &Method::DELETE => {
-                    let id = match get_required_id(request) {
-                        Ok(id) => id,
-                        Err(e) => return build_err(e),
-                    };
-                    (
-                        is_allowed_access(&metadata, &delete_access),
-                        CrudOperation::Delete { id },
-                    )
-                }
-                _ => {
-                    return build_err(CriticalError::new("unsupported HTTP method for CRUD route"))
-                }
-            };
-            if !allowed {
-                return build_err(crate::errors::UnauthorizedError::new());
+    ) -> Result<ApiGatewayProxyResponse, Error> {
+        let metadata = match parse_request_metadata(request) {
+            Ok(m) => m,
+            Err(e) => return build_err(e),
+        };
+        let method = &request.http_method;
+        let (allowed, op) = match method {
+            &Method::POST => {
+                let parent_id = match get_optional_pksk(request, "parent_id") {
+                    Ok(v) => v,
+                    Err(e) => return build_err(e),
+                };
+                let after = match get_optional_pksk(request, "after") {
+                    Ok(v) => v,
+                    Err(e) => return build_err(e),
+                };
+                let data = match parse_request_data::<T::Data>(request) {
+                    Ok(d) => d,
+                    Err(e) => return build_err(e),
+                };
+                (
+                    is_allowed_access(&metadata, &self.create_access),
+                    CrudOperation::Create {
+                        parent_id,
+                        after,
+                        data,
+                    },
+                )
             }
-            build_result(handler(op).await)
-        })
+            &Method::GET => {
+                let id = match get_required_id(request) {
+                    Ok(id) => id,
+                    Err(e) => return build_err(e),
+                };
+                (
+                    is_allowed_access(&metadata, &self.read_access),
+                    CrudOperation::Read { id },
+                )
+            }
+            &Method::PUT => {
+                let item = match parse_request_data::<T>(request) {
+                    Ok(i) => i,
+                    Err(e) => return build_err(e),
+                };
+                (
+                    is_allowed_access(&metadata, &self.update_access),
+                    CrudOperation::Update { item },
+                )
+            }
+            &Method::DELETE => {
+                let id = match get_required_id(request) {
+                    Ok(id) => id,
+                    Err(e) => return build_err(e),
+                };
+                (
+                    is_allowed_access(&metadata, &self.delete_access),
+                    CrudOperation::Delete { id },
+                )
+            }
+            _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
+        };
+        if !allowed {
+            return build_err(UnauthorizedError::new());
+        }
+        build_result((self.handler)(op).await)
     }
 }
 
@@ -205,77 +220,80 @@ where
     }
 }
 
+#[async_trait]
 impl<T, O> CrudSpec for OwnedCrud<T, O>
 where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    fn resolve(
+    async fn resolve(
         &self,
         request: &ApiGatewayProxyRequest,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ApiGatewayProxyResponse, Error>> + Send>>
-    {
-        let handler = &self.handler;
-        let create_access = &self.create_access;
-        let read_access = &self.read_access;
-        let update_access = &self.update_access;
-        let delete_access = &self.delete_access;
-        let owner_of = &self.owner_of;
-        Box::pin(async move {
-            let metadata = match parse_request_metadata(request) {
-                Ok(m) => m,
-                Err(e) => return build_err(e),
-            };
-            if !metadata.is_authenticated {
-                return build_err(crate::errors::UnauthorizedError::new());
+    ) -> Result<ApiGatewayProxyResponse, Error> {
+        let metadata = match parse_request_metadata(request) {
+            Ok(m) => m,
+            Err(e) => return build_err(e),
+        };
+        if !metadata.is_authenticated {
+            return build_err(UnauthorizedError::new());
+        }
+        let method = &request.http_method;
+        let (authorized, op) = match method {
+            &Method::POST => {
+                let parent_id = match get_optional_pksk(request, "parent_id") {
+                    Ok(v) => v,
+                    Err(e) => return build_err(e),
+                };
+                let after = match get_optional_pksk(request, "after") {
+                    Ok(v) => v,
+                    Err(e) => return build_err(e),
+                };
+                let data = match parse_request_data::<T::Data>(request) {
+                    Ok(d) => d,
+                    Err(e) => return build_err(e),
+                };
+                let authorized = is_allowed_owned_access(&metadata, &self.create_access, None);
+                (
+                    authorized,
+                    CrudOperation::Create {
+                        parent_id,
+                        after,
+                        data,
+                    },
+                )
             }
-            let method = &request.http_method;
-            let (authorized, op) = match method {
-                &Method::POST => {
-                    let item = match parse_request_data::<T>(request) {
-                        Ok(i) => i,
-                        Err(e) => return build_err(e),
-                    };
-                    let authorized =
-                        is_authorized_owned(&metadata, create_access, Some(&item), owner_of);
-                    (authorized, CrudOperation::Create { item })
-                }
-                &Method::GET => {
-                    let id = match get_required_id(request) {
-                        Ok(id) => id,
-                        Err(e) => return build_err(e),
-                    };
-                    let authorized =
-                        is_authorized_owned::<T>(&metadata, read_access, None, owner_of);
-                    (authorized, CrudOperation::Read { id })
-                }
-                &Method::PUT => {
-                    let item = match parse_request_data::<T>(request) {
-                        Ok(i) => i,
-                        Err(e) => return build_err(e),
-                    };
-                    let authorized =
-                        is_authorized_owned(&metadata, update_access, Some(&item), owner_of);
-                    (authorized, CrudOperation::Update { item })
-                }
-                &Method::DELETE => {
-                    let id = match get_required_id(request) {
-                        Ok(id) => id,
-                        Err(e) => return build_err(e),
-                    };
-                    let authorized =
-                        is_authorized_owned::<T>(&metadata, delete_access, None, owner_of);
-                    (authorized, CrudOperation::Delete { id })
-                }
-                _ => {
-                    return build_err(CriticalError::new("unsupported HTTP method for CRUD route"))
-                }
-            };
-            if !authorized {
-                return build_err(crate::errors::UnauthorizedError::new());
+            &Method::GET => {
+                let id = match get_required_id(request) {
+                    Ok(id) => id,
+                    Err(e) => return build_err(e),
+                };
+                let authorized = is_allowed_owned_access(&metadata, &self.read_access, None);
+                (authorized, CrudOperation::Read { id })
             }
-            build_result(handler(op).await)
-        })
+            &Method::PUT => {
+                let item = match parse_request_data::<T>(request) {
+                    Ok(i) => i,
+                    Err(e) => return build_err(e),
+                };
+                let owner = (self.owner_of)(&item);
+                let authorized =
+                    is_allowed_owned_access(&metadata, &self.update_access, Some(owner.as_str()));
+                (authorized, CrudOperation::Update { item })
+            }
+            &Method::DELETE => {
+                let id = match get_required_id(request) {
+                    Ok(id) => id,
+                    Err(e) => return build_err(e),
+                };
+                let authorized = is_allowed_owned_access(&metadata, &self.delete_access, None);
+                (authorized, CrudOperation::Delete { id })
+            }
+            _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
+        };
+        if !authorized {
+            return build_err(UnauthorizedError::new());
+        }
+        build_result((self.handler)(op).await)
     }
 }
 
@@ -289,43 +307,15 @@ fn get_required_id(request: &ApiGatewayProxyRequest) -> Result<PkSk, ServerError
         })
 }
 
-fn is_allowed_access(
-    metadata: &crate::shared::request_processing::RequestMetadata,
-    access: &crate::handle_with_router::routing_config::Access,
-) -> bool {
-    match access {
-        crate::handle_with_router::routing_config::Access::Guest => true,
-        crate::handle_with_router::routing_config::Access::User => metadata.is_authenticated,
-        crate::handle_with_router::routing_config::Access::Admin => {
-            metadata.is_authenticated && metadata.is_admin
-        }
-        crate::handle_with_router::routing_config::Access::None => false,
-    }
-}
-
-fn is_authorized_owned<T>(
-    metadata: &crate::shared::request_processing::RequestMetadata,
-    access: &OwnedAccess,
-    item: Option<&T>,
-    owner_of: &Box<dyn Fn(&T) -> String + Send + Sync>,
-) -> bool {
-    match access {
-        OwnedAccess::OwnerOrAdmin => {
-            if metadata.is_admin {
-                true
-            } else if let (Some(item_ref), Some(sub)) = (item, &metadata.user_sub) {
-                sub == &owner_of(item_ref)
-            } else {
-                false
-            }
-        }
-        OwnedAccess::Owner => {
-            if let (Some(item_ref), Some(sub)) = (item, &metadata.user_sub) {
-                sub == &owner_of(item_ref)
-            } else {
-                false
-            }
-        }
-        OwnedAccess::None => false,
-    }
+fn get_optional_pksk(
+    request: &ApiGatewayProxyRequest,
+    key: &str,
+) -> Result<Option<PkSk>, ServerError> {
+    Ok(match request.query_string_parameters.first(key) {
+        Some(val) => Some(
+            PkSk::from_string(val)
+                .map_err(|e| InvalidRequestError::with_debug(&format!("invalid {}", key), &e))?,
+        ),
+        None => None,
+    })
 }
