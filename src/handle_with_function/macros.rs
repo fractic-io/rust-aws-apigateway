@@ -33,7 +33,7 @@ macro_rules! aws_lambda_handle_with_function {
         }
         $crate::aws_lambda_handle_raw!(__handler);
     };
-    (unwrapped $func:ident) => {
+    (RAW $func:ident) => {
         async fn __handler(
             event: lambda_runtime::LambdaEvent<ApiGatewayProxyRequest>,
         ) -> Result<ApiGatewayProxyResponse, lambda_runtime::Error> {
