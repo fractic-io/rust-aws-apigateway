@@ -14,9 +14,8 @@ use crate::{
         request_processing::{parse_request_data, parse_request_metadata},
         response_building::{build_err, build_result},
     },
+    Validation,
 };
-
-use super::validators::Verifier;
 
 type BoxedFuncHandler<I, O> = Box<
     dyn Fn(I) -> Pin<Box<dyn std::future::Future<Output = Result<O, ServerError>> + Send>>
@@ -35,29 +34,28 @@ where
     O: serde::Serialize + Send + 'static,
 {
     access: Access,
+    validation: Validation<()>,
     handler: BoxedVoidHandler<O>,
-    verifiers: Vec<Box<dyn Verifier>>,
 }
 
 impl<O> NullaryFunction<O>
 where
     O: serde::Serialize + Send + 'static,
 {
-    pub fn new<H, Fut>(access: Access, handler: H) -> Box<dyn FunctionSpec>
+    pub fn new<H, Fut>(
+        access: Access,
+        validation: Validation<()>,
+        handler: H,
+    ) -> Box<dyn FunctionSpec>
     where
         H: Fn() -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
         Box::new(Self {
             access,
+            validation,
             handler: Box::new(move || Box::pin(handler())),
-            verifiers: Vec::new(),
         })
-    }
-
-    pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
-        self.verifiers = verifiers;
-        self
     }
 }
 
@@ -87,8 +85,8 @@ where
     O: serde::Serialize + Send + 'static,
 {
     access: Access,
+    validation: Validation<I>,
     handler: BoxedFuncHandler<I, O>,
-    verifiers: Vec<Box<dyn Verifier>>,
 }
 
 impl<I, O> Function<I, O>
@@ -96,21 +94,20 @@ where
     I: DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    pub fn new<H, Fut>(access: Access, handler: H) -> Box<dyn FunctionSpec>
+    pub fn new<H, Fut>(
+        access: Access,
+        validation: Validation<I>,
+        handler: H,
+    ) -> Box<dyn FunctionSpec>
     where
         H: Fn(I) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
         Box::new(Self {
             access,
+            validation,
             handler: Box::new(move |i| Box::pin(handler(i))),
-            verifiers: Vec::new(),
         })
-    }
-
-    pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
-        self.verifiers = verifiers;
-        self
     }
 }
 
@@ -144,10 +141,10 @@ where
     I: DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    access: OwnedAccess,
     owner_of: Box<dyn Fn(&I) -> String + Send + Sync>,
+    access: OwnedAccess,
+    validation: Validation<I>,
     handler: BoxedFuncHandler<I, O>,
-    verifiers: Vec<Box<dyn Verifier>>,
 }
 
 impl<I, O> OwnedFunction<I, O>
@@ -156,8 +153,9 @@ where
     O: serde::Serialize + Send + 'static,
 {
     pub fn new<H, Fut, FOwner>(
-        access: OwnedAccess,
         owner_of: FOwner,
+        access: OwnedAccess,
+        validation: Validation<I>,
         handler: H,
     ) -> Box<dyn FunctionSpec>
     where
@@ -166,16 +164,11 @@ where
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
         Box::new(Self {
-            access,
             owner_of: Box::new(owner_of),
+            access,
+            validation,
             handler: Box::new(move |i| Box::pin(handler(i))),
-            verifiers: Vec::new(),
         })
-    }
-
-    pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
-        self.verifiers = verifiers;
-        self
     }
 }
 

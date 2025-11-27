@@ -16,23 +16,34 @@ use crate::{
 // --------------------------------------------------
 
 /// Access control for non-owned routes.
+#[derive(Debug, Default)]
 pub enum Access {
     /// Any user, including unauthenticated users.
     Guest,
     /// Any authenticated user.
-    User,
+    AnyUser,
     /// Only admin users.
     Admin,
     /// All access is denied.
+    #[default]
     None,
 }
 
+#[derive(Debug, Default)]
+pub struct CrudAccess {
+    pub create: Access,
+    pub read: Access,
+    pub update: Access,
+    pub delete: Access,
+}
+
 /// Access control for owned routes.
+#[derive(Debug, Default)]
 pub enum OwnedAccess {
     /// Any user, including unauthenticated users.
     Guest,
     /// Any authenticated user.
-    User,
+    AnyUser,
     /// Only the resource owner.
     Owner,
     /// Only admin users.
@@ -40,7 +51,16 @@ pub enum OwnedAccess {
     /// Owner or admin users.
     OwnerOrAdmin,
     /// All access is denied.
+    #[default]
     None,
+}
+
+#[derive(Debug, Default)]
+pub struct OwnedCrudAccess {
+    pub create: OwnedAccess,
+    pub read: OwnedAccess,
+    pub update: OwnedAccess,
+    pub delete: OwnedAccess,
 }
 
 /// Trait implemented by function route specifications.
@@ -59,6 +79,22 @@ pub trait CrudSpec: Send + Sync {
         &self,
         request: &ApiGatewayProxyRequest,
     ) -> Result<ApiGatewayProxyResponse, Error>;
+}
+
+pub enum Validation<T> {
+    None,
+    Require(Box<dyn ValidatorSpec<T>>),
+    RequireAll(Vec<Box<dyn ValidatorSpec<T>>>),
+    RequireAny(Vec<Box<dyn ValidatorSpec<T>>>),
+}
+
+pub trait ValidatorSpec<T>: Send + Sync {
+    fn validate(
+        &self,
+        request: &ApiGatewayProxyRequest,
+        data: &T,
+        metadata: &RequestMetadata,
+    ) -> Result<(), Error>;
 }
 
 pub struct RoutingConfig {
@@ -125,7 +161,7 @@ enum RouteSpecRef<'a> {
 pub(crate) fn is_allowed_access(metadata: &RequestMetadata, access: &Access) -> bool {
     match access {
         Access::Guest => true,
-        Access::User => metadata.is_authenticated,
+        Access::AnyUser => metadata.is_authenticated,
         Access::Admin => metadata.is_authenticated && metadata.is_admin,
         Access::None => false,
     }
@@ -138,7 +174,7 @@ pub(crate) fn is_allowed_owned_access(
 ) -> bool {
     match access {
         OwnedAccess::Guest => true,
-        OwnedAccess::User => metadata.is_authenticated,
+        OwnedAccess::AnyUser => metadata.is_authenticated,
         OwnedAccess::Admin => metadata.is_authenticated && metadata.is_admin,
         OwnedAccess::Owner => match (owner, &metadata.user_sub) {
             (Some(owner_sub), Some(user_sub)) => owner_sub == user_sub,
