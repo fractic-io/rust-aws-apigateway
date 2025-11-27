@@ -76,6 +76,9 @@ where
         if !is_allowed_access(&metadata, &self.access) {
             return build_err(UnauthorizedError::new());
         }
+        if let Err(e) = self.validation.validate(request, &(), &metadata) {
+            return build_err(e);
+        }
         build_result((self.handler)().await)
     }
 }
@@ -133,6 +136,9 @@ where
             Ok(i) => i,
             Err(e) => return build_err(e),
         };
+        if let Err(e) = self.validation.validate(request, &input, &metadata) {
+            return build_err(e);
+        }
         build_result((self.handler)(input).await)
     }
 }
@@ -197,6 +203,9 @@ where
         let owner = (self.owner_of)(&input);
         if !is_allowed_owned_access(&metadata, &self.access, Some(owner)) {
             return build_err(UnauthorizedError::new());
+        }
+        if let Err(e) = self.validation.validate(request, &input, &metadata) {
+            return build_err(e);
         }
         build_result((self.handler)(input).await)
     }

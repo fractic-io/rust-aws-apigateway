@@ -149,6 +149,9 @@ where
             }
             _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
         };
+        if let Err(e) = self.validation.validate(request, &op, &metadata) {
+            return build_err(e);
+        }
         build_result((self.handler)(op).await)
     }
 }
@@ -291,6 +294,9 @@ where
             }
             _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
         };
+        if let Err(e) = self.validation.validate(request, &op, &metadata) {
+            return build_err(e);
+        }
         build_result((self.handler)(op).await)
     }
 }
