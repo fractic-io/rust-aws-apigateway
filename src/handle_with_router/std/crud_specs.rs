@@ -72,19 +72,19 @@ where
         update_access: Access,
         delete_access: Access,
         handler: H,
-    ) -> Self
+    ) -> Box<dyn CrudSpec>
     where
         H: Fn(CrudOperation<T>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
-        Self {
+        Box::new(Self {
             create_access,
             read_access,
             update_access,
             delete_access,
             handler: Box::new(move |op| Box::pin(handler(op))),
             verifiers: Vec::new(),
-        }
+        })
     }
 
     pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
@@ -199,14 +199,14 @@ where
         owner_of_id: FOwnerId,
         owner_of_parent_id: FOwnerParentId,
         handler: H,
-    ) -> Self
+    ) -> Box<dyn CrudSpec>
     where
         FOwnerId: Fn(&PkSk) -> Option<String> + Send + Sync + 'static,
         FOwnerParentId: Fn(&PkSk) -> Option<String> + Send + Sync + 'static,
         H: Fn(CrudOperation<T>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
-        Self {
+        Box::new(Self {
             create_access,
             read_access,
             update_access,
@@ -215,7 +215,7 @@ where
             owner_of_parent_id: Box::new(owner_of_parent_id),
             handler: Box::new(move |op| Box::pin(handler(op))),
             verifiers: Vec::new(),
-        }
+        })
     }
 
     pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {

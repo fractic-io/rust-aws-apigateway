@@ -43,16 +43,16 @@ impl<O> VoidFunction<O>
 where
     O: serde::Serialize + Send + 'static,
 {
-    pub fn new<H, Fut>(access: Access, handler: H) -> Self
+    pub fn new<H, Fut>(access: Access, handler: H) -> Box<dyn FunctionSpec>
     where
         H: Fn() -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
-        Self {
+        Box::new(Self {
             access,
             handler: Box::new(move || Box::pin(handler())),
             verifiers: Vec::new(),
-        }
+        })
     }
 
     pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
@@ -96,16 +96,16 @@ where
     I: DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    pub fn new<H, Fut>(access: Access, handler: H) -> Self
+    pub fn new<H, Fut>(access: Access, handler: H) -> Box<dyn FunctionSpec>
     where
         H: Fn(I) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
-        Self {
+        Box::new(Self {
             access,
             handler: Box::new(move |i| Box::pin(handler(i))),
             verifiers: Vec::new(),
-        }
+        })
     }
 
     pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {
@@ -155,18 +155,22 @@ where
     I: DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    pub fn new<H, Fut, FOwner>(access: OwnedAccess, owner_of: FOwner, handler: H) -> Self
+    pub fn new<H, Fut, FOwner>(
+        access: OwnedAccess,
+        owner_of: FOwner,
+        handler: H,
+    ) -> Box<dyn FunctionSpec>
     where
         FOwner: Fn(&I) -> String + Send + Sync + 'static,
         H: Fn(I) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
-        Self {
+        Box::new(Self {
             access,
             owner_of: Box::new(owner_of),
             handler: Box::new(move |i| Box::pin(handler(i))),
             verifiers: Vec::new(),
-        }
+        })
     }
 
     pub fn with_verifiers(mut self, verifiers: Vec<Box<dyn Verifier>>) -> Self {

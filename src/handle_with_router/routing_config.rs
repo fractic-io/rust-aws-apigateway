@@ -62,8 +62,8 @@ pub trait CrudSpec: Send + Sync {
 }
 
 pub struct RoutingConfig {
-    pub function_routes: HashMap<String, Box<dyn FunctionSpec>>,
-    pub crud_routes: HashMap<String, Box<dyn CrudSpec>>,
+    pub function_routes: HashMap<&'static str, Box<dyn FunctionSpec>>,
+    pub crud_routes: HashMap<&'static str, Box<dyn CrudSpec>>,
 }
 
 // API Gateway routing utils.
@@ -94,7 +94,7 @@ impl RoutingConfig {
                 .payload
                 .path_parameters
                 .get("proxy")
-                .and_then(|proxy| self.function_routes.get(proxy))
+                .and_then(|proxy| self.function_routes.get(proxy.as_str()))
                 .map(|spec| RouteSpecRef::Function(spec.as_ref()))
         } else {
             None
@@ -109,7 +109,7 @@ impl RoutingConfig {
             .payload
             .path_parameters
             .get("proxy")
-            .and_then(|proxy| self.crud_routes.get(proxy))
+            .and_then(|proxy| self.crud_routes.get(proxy.as_str()))
             .map(|spec| RouteSpecRef::Crud(spec.as_ref()))
     }
 }
