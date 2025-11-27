@@ -8,7 +8,8 @@ use std::pin::Pin;
 use crate::{
     errors::UnauthorizedError,
     handle_with_router::routing_config::{
-        is_allowed_access, is_allowed_owned_access, Access, FunctionSpec, OwnedAccess,
+        is_allowed_access, is_allowed_owned_access, preliminary_access_check, Access, FunctionSpec,
+        OwnedAccess,
     },
     shared::{
         request_processing::{parse_request_data, parse_request_metadata},
@@ -141,7 +142,7 @@ where
     I: DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    owner_of: Box<dyn Fn(&I) -> String + Send + Sync>,
+    owner_of: Box<dyn Fn(&I) -> &str + Send + Sync>,
     access: OwnedAccess,
     validation: Validation<I>,
     handler: BoxedFuncHandler<I, O>,
@@ -159,7 +160,7 @@ where
         handler: H,
     ) -> Box<dyn FunctionSpec>
     where
-        FOwner: Fn(&I) -> String + Send + Sync + 'static,
+        FOwner: Fn(&I) -> &str + Send + Sync + 'static,
         H: Fn(I) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
@@ -186,7 +187,7 @@ where
             Ok(m) => m,
             Err(e) => return build_err(e),
         };
-        if !metadata.is_authenticated {
+        if !preliminary_access_check(&metadata, &self.access) {
             return build_err(UnauthorizedError::new());
         }
         let input = match parse_request_data::<I>(request) {
@@ -194,8 +195,7 @@ where
             Err(e) => return build_err(e),
         };
         let owner = (self.owner_of)(&input);
-        let authorized = is_allowed_owned_access(&metadata, &self.access, Some(owner.as_str()));
-        if !authorized {
+        if !is_allowed_owned_access(&metadata, &self.access, Some(owner)) {
             return build_err(UnauthorizedError::new());
         }
         build_result((self.handler)(input).await)

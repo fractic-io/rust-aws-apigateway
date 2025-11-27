@@ -231,3 +231,23 @@ pub(crate) fn is_allowed_owned_access(
         OwnedAccess::None => false,
     }
 }
+
+/// Before further processing, can quickly check if the request can at least be
+/// authorized in principle, assuming the owner later matches. Once owner is
+/// known, final check should be made with `is_allowed_owned_access`.
+pub(crate) fn preliminary_access_check(metadata: &RequestMetadata, access: &OwnedAccess) -> bool {
+    match access {
+        OwnedAccess::Guest => true,
+        OwnedAccess::AnyUser => metadata.is_authenticated,
+        OwnedAccess::Admin => metadata.is_authenticated && metadata.is_admin,
+        OwnedAccess::Owner => metadata.is_authenticated,
+        OwnedAccess::OwnerOrAdmin => {
+            if metadata.is_authenticated && metadata.is_admin {
+                true
+            } else {
+                metadata.is_authenticated
+            }
+        }
+        OwnedAccess::None => false,
+    }
+}

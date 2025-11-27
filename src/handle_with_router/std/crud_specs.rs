@@ -11,7 +11,9 @@ use std::pin::Pin;
 
 use crate::{
     errors::{InvalidRequestError, UnauthorizedError},
-    handle_with_router::routing_config::{is_allowed_access, is_allowed_owned_access, CrudSpec},
+    handle_with_router::routing_config::{
+        is_allowed_access, is_allowed_owned_access, preliminary_access_check, CrudSpec,
+    },
     shared::{
         request_processing::{parse_request_data, parse_request_metadata},
         response_building::{build_err, build_result},
@@ -92,8 +94,11 @@ where
             Err(e) => return build_err(e),
         };
         let method = &request.http_method;
-        let (allowed, op) = match method {
+        let op = match method {
             &Method::POST => {
+                if !is_allowed_access(&metadata, &self.access.create) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let parent_id = match get_optional_pksk(request, "parent_id") {
                     Ok(v) => v,
                     Err(e) => return build_err(e),
@@ -106,50 +111,44 @@ where
                     Ok(d) => d,
                     Err(e) => return build_err(e),
                 };
-                (
-                    is_allowed_access(&metadata, &self.access.create),
-                    CrudOperation::Create {
-                        parent_id,
-                        after,
-                        data,
-                    },
-                )
+                CrudOperation::Create {
+                    parent_id,
+                    after,
+                    data,
+                }
             }
             &Method::GET => {
+                if !is_allowed_access(&metadata, &self.access.read) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let id = match get_required_id(request) {
                     Ok(id) => id,
                     Err(e) => return build_err(e),
                 };
-                (
-                    is_allowed_access(&metadata, &self.access.read),
-                    CrudOperation::Read { id },
-                )
+                CrudOperation::Read { id }
             }
             &Method::PUT => {
+                if !is_allowed_access(&metadata, &self.access.update) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let item = match parse_request_data::<T>(request) {
                     Ok(i) => i,
                     Err(e) => return build_err(e),
                 };
-                (
-                    is_allowed_access(&metadata, &self.access.update),
-                    CrudOperation::Update { item },
-                )
+                CrudOperation::Update { item }
             }
             &Method::DELETE => {
+                if !is_allowed_access(&metadata, &self.access.delete) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let id = match get_required_id(request) {
                     Ok(id) => id,
                     Err(e) => return build_err(e),
                 };
-                (
-                    is_allowed_access(&metadata, &self.access.delete),
-                    CrudOperation::Delete { id },
-                )
+                CrudOperation::Delete { id }
             }
             _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
         };
-        if !allowed {
-            return build_err(UnauthorizedError::new());
-        }
         build_result((self.handler)(op).await)
     }
 }
@@ -160,8 +159,8 @@ where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    owner_of_id: Box<dyn Fn(&PkSk) -> Option<String> + Send + Sync>,
-    owner_of_parent_id: Box<dyn Fn(&PkSk) -> Option<String> + Send + Sync>,
+    owner_of_id: Box<dyn Fn(&PkSk) -> Option<&str> + Send + Sync>,
+    owner_of_parent_id: Box<dyn Fn(&PkSk) -> Option<&str> + Send + Sync>,
     access: OwnedCrudAccess,
     validation: Validation<CrudOperation<T>>,
     handler: BoxedCrudHandler<T, O>,
@@ -180,8 +179,8 @@ where
         handler: H,
     ) -> Box<dyn CrudSpec>
     where
-        FOwnerId: Fn(&PkSk) -> Option<String> + Send + Sync + 'static,
-        FOwnerParentId: Fn(&PkSk) -> Option<String> + Send + Sync + 'static,
+        FOwnerId: Fn(&PkSk) -> Option<&str> + Send + Sync + 'static,
+        FOwnerParentId: Fn(&PkSk) -> Option<&str> + Send + Sync + 'static,
         H: Fn(CrudOperation<T>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<O, ServerError>> + Send + 'static,
     {
@@ -209,12 +208,12 @@ where
             Ok(m) => m,
             Err(e) => return build_err(e),
         };
-        if !metadata.is_authenticated {
-            return build_err(UnauthorizedError::new());
-        }
         let method = &request.http_method;
-        let (authorized, op) = match method {
+        let op = match method {
             &Method::POST => {
+                if !preliminary_access_check(&metadata, &self.access.create) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let parent_id = match get_optional_pksk(request, "parent_id") {
                     Ok(v) => v,
                     Err(e) => return build_err(e),
@@ -227,56 +226,71 @@ where
                     Ok(d) => d,
                     Err(e) => return build_err(e),
                 };
-                let owner = match parent_id {
-                    Some(ref pid) => (self.owner_of_parent_id)(pid),
-                    None => (self.owner_of_parent_id)(&PkSk::root()),
+                let authorized = match parent_id {
+                    Some(ref pid) => is_allowed_owned_access(
+                        &metadata,
+                        &self.access.create,
+                        (self.owner_of_parent_id)(pid),
+                    ),
+                    None => is_allowed_owned_access(
+                        &metadata,
+                        &self.access.create,
+                        (self.owner_of_parent_id)(&PkSk::root()),
+                    ),
                 };
-                let authorized =
-                    is_allowed_owned_access(&metadata, &self.access.create, owner.as_deref());
-                (
-                    authorized,
-                    CrudOperation::Create {
-                        parent_id,
-                        after,
-                        data,
-                    },
-                )
+                if !authorized {
+                    return build_err(UnauthorizedError::new());
+                }
+                CrudOperation::Create {
+                    parent_id,
+                    after,
+                    data,
+                }
             }
             &Method::GET => {
+                if !preliminary_access_check(&metadata, &self.access.read) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let id = match get_required_id(request) {
                     Ok(id) => id,
                     Err(e) => return build_err(e),
                 };
                 let owner = (self.owner_of_id)(&id);
-                let authorized =
-                    is_allowed_owned_access(&metadata, &self.access.read, owner.as_deref());
-                (authorized, CrudOperation::Read { id })
+                if !is_allowed_owned_access(&metadata, &self.access.read, owner) {
+                    return build_err(UnauthorizedError::new());
+                }
+                CrudOperation::Read { id }
             }
             &Method::PUT => {
+                if !preliminary_access_check(&metadata, &self.access.update) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let item = match parse_request_data::<T>(request) {
                     Ok(i) => i,
                     Err(e) => return build_err(e),
                 };
                 let owner = (self.owner_of_id)(item.id());
-                let authorized =
-                    is_allowed_owned_access(&metadata, &self.access.update, owner.as_deref());
-                (authorized, CrudOperation::Update { item })
+                if !is_allowed_owned_access(&metadata, &self.access.update, owner) {
+                    return build_err(UnauthorizedError::new());
+                }
+                CrudOperation::Update { item }
             }
             &Method::DELETE => {
+                if !preliminary_access_check(&metadata, &self.access.delete) {
+                    return build_err(UnauthorizedError::new());
+                }
                 let id = match get_required_id(request) {
                     Ok(id) => id,
                     Err(e) => return build_err(e),
                 };
                 let owner = (self.owner_of_id)(&id);
-                let authorized =
-                    is_allowed_owned_access(&metadata, &self.access.delete, owner.as_deref());
-                (authorized, CrudOperation::Delete { id })
+                if !is_allowed_owned_access(&metadata, &self.access.delete, owner) {
+                    return build_err(UnauthorizedError::new());
+                }
+                CrudOperation::Delete { id }
             }
             _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
         };
-        if !authorized {
-            return build_err(UnauthorizedError::new());
-        }
         build_result((self.handler)(op).await)
     }
 }
