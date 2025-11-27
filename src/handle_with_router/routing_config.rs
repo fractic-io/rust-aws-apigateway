@@ -5,12 +5,19 @@ use aws_lambda_events::{
     apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse},
     http::Method,
 };
+use fractic_server_error::{define_sensitive_error, ServerError};
 use lambda_runtime::{Error, LambdaEvent};
 
 use crate::{
     errors::InvalidRouteError,
     shared::{request_processing::RequestMetadata, response_building::build_err},
 };
+
+define_sensitive_error!(
+    RequireAnyWasFalse,
+    "At least one validation rule must be true. Errors:\n{errors:?}",
+    { errors: Vec<ServerError> }
+);
 
 // API Gateway routing config.
 // --------------------------------------------------
@@ -94,7 +101,7 @@ pub trait ValidatorSpec<T>: Send + Sync {
         request: &ApiGatewayProxyRequest,
         data: &T,
         metadata: &RequestMetadata,
-    ) -> Result<(), Error>;
+    ) -> Result<(), ServerError>;
 }
 
 pub struct RoutingConfig {
@@ -106,6 +113,7 @@ pub struct RoutingConfig {
 // --------------------------------------------------
 
 impl RoutingConfig {
+    // NOTE: Called by macro-generated tokens, so must be publically visible.
     pub async fn handle(
         &self,
         event: LambdaEvent<ApiGatewayProxyRequest>,
@@ -153,6 +161,36 @@ impl RoutingConfig {
 enum RouteSpecRef<'a> {
     Function(&'a dyn FunctionSpec),
     Crud(&'a dyn CrudSpec),
+}
+
+impl<T> Validation<T> {
+    pub(crate) fn validate(
+        &self,
+        request: &ApiGatewayProxyRequest,
+        data: &T,
+        metadata: &RequestMetadata,
+    ) -> Result<(), ServerError> {
+        match self {
+            Validation::None => Ok(()),
+            Validation::Require(v) => v.validate(request, data, metadata),
+            Validation::RequireAll(vs) => {
+                for v in vs {
+                    v.validate(request, data, metadata)?;
+                }
+                Ok(())
+            }
+            Validation::RequireAny(vs) => {
+                let mut errors = Vec::new();
+                for v in vs {
+                    match v.validate(request, data, metadata) {
+                        Ok(()) => return Ok(()),
+                        Err(e) => errors.push(e),
+                    }
+                }
+                Err(RequireAnyWasFalse::new(errors))
+            }
+        }
+    }
 }
 
 // Access helpers.
