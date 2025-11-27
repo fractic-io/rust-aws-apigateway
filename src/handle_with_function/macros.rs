@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! aws_lambda_handle_with_function {
-    ($validator:ident, $func:ident, $request_data_type:ident) => {
+    ($validator:path, $func:path, $request_data_type:ty) => {
         async fn __handler(
             event: ::lambda_runtime::LambdaEvent<
                 ::aws_lambda_events::apigw::ApiGatewayProxyRequest,
@@ -20,7 +20,7 @@ macro_rules! aws_lambda_handle_with_function {
         }
         $crate::aws_lambda_handle_raw!(__handler);
     };
-    ($validator:ident, $func:ident) => {
+    ($validator:path, $func:path) => {
         async fn __handler(
             event: ::lambda_runtime::LambdaEvent<
                 ::aws_lambda_events::apigw::ApiGatewayProxyRequest,
@@ -37,7 +37,7 @@ macro_rules! aws_lambda_handle_with_function {
         }
         $crate::aws_lambda_handle_raw!(__handler);
     };
-    (RAW $func:ident) => {
+    (RAW $func:path) => {
         async fn __handler(
             event: ::lambda_runtime::LambdaEvent<
                 ::aws_lambda_events::apigw::ApiGatewayProxyRequest,
