@@ -19,7 +19,7 @@ use serde::Serialize;
 
 use crate::{
     constants::{INTERNAL_SERVER_ERROR_MSG, UNAUTHORIZED_ERROR_MSG},
-    EncodingError,
+    errors::EncodingError,
 };
 
 // API Gateway response utils.
@@ -58,7 +58,17 @@ pub fn build_simple(data: impl Into<Body>) -> ApiGatewayProxyResponse {
     }
 }
 
-pub fn build_result<T>(data: T) -> Result<ApiGatewayProxyResponse, Error>
+pub fn build_result<T>(result: Result<T, ServerError>) -> Result<ApiGatewayProxyResponse, Error>
+where
+    T: serde::Serialize,
+{
+    match result {
+        Ok(data) => build_ok(data),
+        Err(error) => build_err(error),
+    }
+}
+
+pub(crate) fn build_ok<T>(data: T) -> Result<ApiGatewayProxyResponse, Error>
 where
     T: serde::Serialize,
 {
@@ -78,7 +88,7 @@ where
     Ok(resp)
 }
 
-pub fn build_error(error: ServerError) -> Result<ApiGatewayProxyResponse, Error> {
+pub(crate) fn build_err(error: ServerError) -> Result<ApiGatewayProxyResponse, Error> {
     enum LoggingLevel {
         Error,
         Warning,
@@ -230,7 +240,7 @@ fn build_headers(content_type: ContentType) -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::UnauthorizedError;
+    use crate::errors::UnauthorizedError;
 
     use super::*;
     use aws_lambda_events::encodings::Body;
@@ -259,7 +269,7 @@ mod tests {
     #[test]
     fn test_build_result_string() {
         let data = "Test string.".to_string();
-        let result = build_result(data).unwrap();
+        let result = build_ok(data).unwrap();
         let body: Value = serde_json::from_str(match &result.body.unwrap() {
             Body::Text(b) => b,
             _ => panic!("Expected response body."),
@@ -277,7 +287,7 @@ mod tests {
         let error = MockResponseData {
             key: "Test value.".to_string(),
         };
-        let result = build_result(error).unwrap();
+        let result = build_ok(error).unwrap();
         let body: Value = serde_json::from_str(match &result.body.unwrap() {
             Body::Text(b) => b,
             _ => panic!("Expected response body."),
@@ -299,7 +309,7 @@ mod tests {
     fn test_build_user_error() {
         define_user_error!(TestError, "User error: {details}.", { details: &str });
         let error = TestError::new("test details");
-        let result = build_error(error).unwrap();
+        let result = build_err(error).unwrap();
         let body: Value = serde_json::from_str(match &result.body.unwrap() {
             Body::Text(b) => b,
             _ => panic!("Expected response body."),
@@ -319,7 +329,7 @@ mod tests {
     fn test_build_client_error() {
         define_client_error!(TestError, "Client error: {details}.", { details: &str });
         let error = TestError::new("test details");
-        let result = build_error(error).unwrap();
+        let result = build_err(error).unwrap();
         let body: Value = serde_json::from_str(match &result.body.unwrap() {
             Body::Text(b) => b,
             _ => panic!("Expected response body."),
@@ -343,7 +353,7 @@ mod tests {
     #[test]
     fn test_build_internal_error() {
         let error = CriticalError::new("internal error message");
-        let result = build_error(error).unwrap();
+        let result = build_err(error).unwrap();
         let body = match result.body.unwrap() {
             Body::Text(b) => b,
             _ => panic!("Expected response body."),
@@ -356,7 +366,7 @@ mod tests {
     fn test_build_unauthorized_error() {
         let error =
             UnauthorizedError::with_debug(&"internal authentication error message".to_string());
-        let result = build_error(error).unwrap();
+        let result = build_err(error).unwrap();
         let body = match result.body.unwrap() {
             Body::Text(b) => b,
             _ => panic!("Expected response body."),

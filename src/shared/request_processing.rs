@@ -2,8 +2,8 @@ use aws_lambda_events::apigw::ApiGatewayProxyRequest;
 use fractic_server_error::ServerError;
 
 use crate::{
-    auth::{get_sub_of_authenticated_user, is_admin, is_authenticated},
     errors::InvalidRequestError,
+    shared::auth_utils::{get_sub_of_authenticated_user, is_admin, is_authenticated},
 };
 
 #[derive(Debug, Clone)]
