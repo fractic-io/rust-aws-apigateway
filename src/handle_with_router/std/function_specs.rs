@@ -30,7 +30,7 @@ type BoxedVoidHandler<O> = Box<
         + Sync,
 >;
 
-pub struct VoidFunction<O>
+pub struct NullaryFunction<O>
 where
     O: serde::Serialize + Send + 'static,
 {
@@ -39,7 +39,7 @@ where
     verifiers: Vec<Box<dyn Verifier>>,
 }
 
-impl<O> VoidFunction<O>
+impl<O> NullaryFunction<O>
 where
     O: serde::Serialize + Send + 'static,
 {
@@ -62,7 +62,7 @@ where
 }
 
 #[async_trait]
-impl<O> FunctionSpec for VoidFunction<O>
+impl<O> FunctionSpec for NullaryFunction<O>
 where
     O: serde::Serialize + Send + 'static,
 {
