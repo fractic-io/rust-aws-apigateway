@@ -22,19 +22,39 @@ use crate::{
 };
 
 pub enum CrudOperation<T: DynamoObject> {
+    List,
     Create {
         parent_id: Option<PkSk>,
         after: Option<PkSk>,
         data: T::Data,
     },
+    CreateBatch {
+        parent_id: Option<PkSk>,
+        after: Option<PkSk>,
+        data: Vec<T::Data>,
+    },
     Read {
         id: PkSk,
+    },
+    ReadBatch {
+        ids: Vec<PkSk>,
     },
     Update {
         item: T,
     },
     Delete {
         id: PkSk,
+        non_recursive: bool,
+    },
+    DeleteBatch {
+        ids: Vec<PkSk>,
+        non_recursive: bool,
+    },
+    DeleteAll {
+        non_recursive: bool,
+    },
+    ReplaceAll {
+        data: Vec<T::Data>,
     },
 }
 
@@ -96,36 +116,78 @@ where
         let method = &request.http_method;
         let op = match method {
             &Method::POST => {
-                if !is_allowed_access(&metadata, &self.access.create) {
-                    return build_err(UnauthorizedError::new());
-                }
-                let parent_id = match get_optional_pksk(request, "parent_id") {
-                    Ok(v) => v,
-                    Err(e) => return build_err(e),
-                };
-                let after = match get_optional_pksk(request, "after") {
-                    Ok(v) => v,
-                    Err(e) => return build_err(e),
-                };
-                let data = match parse_request_data::<T::Data>(request) {
-                    Ok(d) => d,
-                    Err(e) => return build_err(e),
-                };
-                CrudOperation::Create {
-                    parent_id,
-                    after,
-                    data,
+                if has_flag(request, "replace_all") {
+                    if !is_allowed_access(&metadata, &self.access.replace_all) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let data = match parse_request_data::<Vec<T::Data>>(request) {
+                        Ok(d) => d,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::ReplaceAll { data }
+                } else {
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    let after = match get_optional_pksk(request, "after") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    // Batch create if body is a list; fall back to single.
+                    match parse_request_data::<Vec<T::Data>>(request) {
+                        Ok(list) => {
+                            if !is_allowed_access(&metadata, &self.access.create_batch) {
+                                return build_err(UnauthorizedError::new());
+                            }
+                            CrudOperation::CreateBatch {
+                                parent_id,
+                                after,
+                                data: list,
+                            }
+                        }
+                        Err(_) => {
+                            if !is_allowed_access(&metadata, &self.access.create) {
+                                return build_err(UnauthorizedError::new());
+                            }
+                            let data = match parse_request_data::<T::Data>(request) {
+                                Ok(d) => d,
+                                Err(e) => return build_err(e),
+                            };
+                            CrudOperation::Create {
+                                parent_id,
+                                after,
+                                data,
+                            }
+                        }
+                    }
                 }
             }
             &Method::GET => {
-                if !is_allowed_access(&metadata, &self.access.read) {
-                    return build_err(UnauthorizedError::new());
+                if has_flag(request, "all") {
+                    if !is_allowed_access(&metadata, &self.access.list) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::List
+                } else if let Some(res) = maybe_ids(request) {
+                    if !is_allowed_access(&metadata, &self.access.read_batch) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let ids = match res {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::ReadBatch { ids }
+                } else {
+                    if !is_allowed_access(&metadata, &self.access.read) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::Read { id }
                 }
-                let id = match get_required_id(request) {
-                    Ok(id) => id,
-                    Err(e) => return build_err(e),
-                };
-                CrudOperation::Read { id }
             }
             &Method::PUT => {
                 if !is_allowed_access(&metadata, &self.access.update) {
@@ -138,14 +200,31 @@ where
                 CrudOperation::Update { item }
             }
             &Method::DELETE => {
-                if !is_allowed_access(&metadata, &self.access.delete) {
-                    return build_err(UnauthorizedError::new());
+                let non_recursive = has_flag(request, "non_recursive");
+                if has_flag(request, "all") {
+                    if !is_allowed_access(&metadata, &self.access.delete_all) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::DeleteAll { non_recursive }
+                } else if let Some(res) = maybe_ids(request) {
+                    if !is_allowed_access(&metadata, &self.access.delete_batch) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let ids = match res {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::DeleteBatch { ids, non_recursive }
+                } else {
+                    if !is_allowed_access(&metadata, &self.access.delete) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::Delete { id, non_recursive }
                 }
-                let id = match get_required_id(request) {
-                    Ok(id) => id,
-                    Err(e) => return build_err(e),
-                };
-                CrudOperation::Delete { id }
             }
             _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
         };
@@ -214,55 +293,138 @@ where
         let method = &request.http_method;
         let op = match method {
             &Method::POST => {
-                if !preliminary_access_check(&metadata, &self.access.create) {
-                    return build_err(UnauthorizedError::new());
-                }
-                let parent_id = match get_optional_pksk(request, "parent_id") {
-                    Ok(v) => v,
-                    Err(e) => return build_err(e),
-                };
-                let after = match get_optional_pksk(request, "after") {
-                    Ok(v) => v,
-                    Err(e) => return build_err(e),
-                };
-                let data = match parse_request_data::<T::Data>(request) {
-                    Ok(d) => d,
-                    Err(e) => return build_err(e),
-                };
-                let authorized = match parent_id {
-                    Some(ref pid) => is_allowed_owned_access(
+                if has_flag(request, "replace_all") {
+                    if !preliminary_access_check(&metadata, &self.access.replace_all) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let authorized = is_allowed_owned_access(
                         &metadata,
-                        &self.access.create,
-                        (self.owner_of_parent_id)(pid),
-                    ),
-                    None => is_allowed_owned_access(
-                        &metadata,
-                        &self.access.create,
+                        &self.access.replace_all,
                         (self.owner_of_parent_id)(&PkSk::root()),
-                    ),
-                };
-                if !authorized {
-                    return build_err(UnauthorizedError::new());
-                }
-                CrudOperation::Create {
-                    parent_id,
-                    after,
-                    data,
+                    );
+                    if !authorized {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let data = match parse_request_data::<Vec<T::Data>>(request) {
+                        Ok(d) => d,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::ReplaceAll { data }
+                } else {
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    let after = match get_optional_pksk(request, "after") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    // Batch create if body is a list; fall back to single.
+                    match parse_request_data::<Vec<T::Data>>(request) {
+                        Ok(list) => {
+                            if !preliminary_access_check(&metadata, &self.access.create_batch) {
+                                return build_err(UnauthorizedError::new());
+                            }
+                            let authorized = match parent_id {
+                                Some(ref pid) => is_allowed_owned_access(
+                                    &metadata,
+                                    &self.access.create_batch,
+                                    (self.owner_of_parent_id)(pid),
+                                ),
+                                None => is_allowed_owned_access(
+                                    &metadata,
+                                    &self.access.create_batch,
+                                    (self.owner_of_parent_id)(&PkSk::root()),
+                                ),
+                            };
+                            if !authorized {
+                                return build_err(UnauthorizedError::new());
+                            }
+                            CrudOperation::CreateBatch {
+                                parent_id,
+                                after,
+                                data: list,
+                            }
+                        }
+                        Err(_) => {
+                            if !preliminary_access_check(&metadata, &self.access.create) {
+                                return build_err(UnauthorizedError::new());
+                            }
+                            let authorized = match parent_id {
+                                Some(ref pid) => is_allowed_owned_access(
+                                    &metadata,
+                                    &self.access.create,
+                                    (self.owner_of_parent_id)(pid),
+                                ),
+                                None => is_allowed_owned_access(
+                                    &metadata,
+                                    &self.access.create,
+                                    (self.owner_of_parent_id)(&PkSk::root()),
+                                ),
+                            };
+                            if !authorized {
+                                return build_err(UnauthorizedError::new());
+                            }
+                            let data = match parse_request_data::<T::Data>(request) {
+                                Ok(d) => d,
+                                Err(e) => return build_err(e),
+                            };
+                            CrudOperation::Create {
+                                parent_id,
+                                after,
+                                data,
+                            }
+                        }
+                    }
                 }
             }
             &Method::GET => {
-                if !preliminary_access_check(&metadata, &self.access.read) {
-                    return build_err(UnauthorizedError::new());
+                if has_flag(request, "all") {
+                    if !preliminary_access_check(&metadata, &self.access.list) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let authorized = is_allowed_owned_access(
+                        &metadata,
+                        &self.access.list,
+                        (self.owner_of_parent_id)(&PkSk::root()),
+                    );
+                    if !authorized {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::List
+                } else if let Some(res) = maybe_ids(request) {
+                    if !preliminary_access_check(&metadata, &self.access.read_batch) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let ids = match res {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    let all_authorized = ids.iter().all(|id| {
+                        is_allowed_owned_access(
+                            &metadata,
+                            &self.access.read_batch,
+                            (self.owner_of_id)(id),
+                        )
+                    });
+                    if !all_authorized {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::ReadBatch { ids }
+                } else {
+                    if !preliminary_access_check(&metadata, &self.access.read) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    let owner = (self.owner_of_id)(&id);
+                    if !is_allowed_owned_access(&metadata, &self.access.read, owner) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::Read { id }
                 }
-                let id = match get_required_id(request) {
-                    Ok(id) => id,
-                    Err(e) => return build_err(e),
-                };
-                let owner = (self.owner_of_id)(&id);
-                if !is_allowed_owned_access(&metadata, &self.access.read, owner) {
-                    return build_err(UnauthorizedError::new());
-                }
-                CrudOperation::Read { id }
             }
             &Method::PUT => {
                 if !preliminary_access_check(&metadata, &self.access.update) {
@@ -279,18 +441,53 @@ where
                 CrudOperation::Update { item }
             }
             &Method::DELETE => {
-                if !preliminary_access_check(&metadata, &self.access.delete) {
-                    return build_err(UnauthorizedError::new());
+                let non_recursive = has_flag(request, "non_recursive");
+                if has_flag(request, "all") {
+                    if !preliminary_access_check(&metadata, &self.access.delete_all) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let authorized = is_allowed_owned_access(
+                        &metadata,
+                        &self.access.delete_all,
+                        (self.owner_of_parent_id)(&PkSk::root()),
+                    );
+                    if !authorized {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::DeleteAll { non_recursive }
+                } else if let Some(res) = maybe_ids(request) {
+                    if !preliminary_access_check(&metadata, &self.access.delete_batch) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let ids = match res {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    let all_authorized = ids.iter().all(|id| {
+                        is_allowed_owned_access(
+                            &metadata,
+                            &self.access.delete_batch,
+                            (self.owner_of_id)(id),
+                        )
+                    });
+                    if !all_authorized {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::DeleteBatch { ids, non_recursive }
+                } else {
+                    if !preliminary_access_check(&metadata, &self.access.delete) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    let id = match get_required_id(request) {
+                        Ok(id) => id,
+                        Err(e) => return build_err(e),
+                    };
+                    let owner = (self.owner_of_id)(&id);
+                    if !is_allowed_owned_access(&metadata, &self.access.delete, owner) {
+                        return build_err(UnauthorizedError::new());
+                    }
+                    CrudOperation::Delete { id, non_recursive }
                 }
-                let id = match get_required_id(request) {
-                    Ok(id) => id,
-                    Err(e) => return build_err(e),
-                };
-                let owner = (self.owner_of_id)(&id);
-                if !is_allowed_owned_access(&metadata, &self.access.delete, owner) {
-                    return build_err(UnauthorizedError::new());
-                }
-                CrudOperation::Delete { id }
             }
             _ => return build_err(CriticalError::new("unsupported HTTP method for CRUD route")),
         };
@@ -321,5 +518,33 @@ fn get_optional_pksk(
                 .map_err(|e| InvalidRequestError::with_debug(&format!("invalid {}", key), &e))?,
         ),
         None => None,
+    })
+}
+
+fn has_flag(request: &ApiGatewayProxyRequest, key: &str) -> bool {
+    request.query_string_parameters.first(key).is_some()
+}
+
+fn maybe_ids(request: &ApiGatewayProxyRequest) -> Option<Result<Vec<PkSk>, ServerError>> {
+    request.query_string_parameters.first("ids").map(|raw| {
+        let mut ids: Vec<PkSk> = Vec::new();
+        if raw.trim().is_empty() {
+            return Err(InvalidRequestError::new(&format!(
+                "query parameter 'ids' must not be empty"
+            )));
+        }
+        for part in raw.split(',') {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                return Err(InvalidRequestError::new(&format!(
+                    "query parameter 'ids' contains empty id"
+                )));
+            }
+            match PkSk::from_string(trimmed) {
+                Ok(p) => ids.push(p),
+                Err(e) => return Err(InvalidRequestError::with_debug("invalid id in 'ids'", &e)),
+            }
+        }
+        Ok(ids)
     })
 }
