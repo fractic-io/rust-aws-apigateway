@@ -201,6 +201,9 @@ where
             }
             &Method::DELETE => {
                 let non_recursive = has_flag(request, "non_recursive");
+                if non_recursive && !self.access.allow_non_recursive_delete {
+                    return build_err(UnauthorizedError::new());
+                }
                 if has_flag(request, "all") {
                     if !is_allowed_access(&metadata, &self.access.delete_all) {
                         return build_err(UnauthorizedError::new());
@@ -442,6 +445,9 @@ where
             }
             &Method::DELETE => {
                 let non_recursive = has_flag(request, "non_recursive");
+                if non_recursive && !self.access.allow_non_recursive_delete {
+                    return build_err(UnauthorizedError::new());
+                }
                 if has_flag(request, "all") {
                     if !preliminary_access_check(&metadata, &self.access.delete_all) {
                         return build_err(UnauthorizedError::new());

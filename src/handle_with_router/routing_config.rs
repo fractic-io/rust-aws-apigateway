@@ -48,6 +48,7 @@ pub struct CrudAccess {
     pub delete_batch: Access,
     pub delete_all: Access,
     pub replace_all: Access,
+    pub allow_non_recursive_delete: bool,
 }
 
 /// Access control for owned routes.
@@ -80,6 +81,7 @@ pub struct OwnedCrudAccess {
     pub delete_batch: OwnedAccess,
     pub delete_all: OwnedAccess,
     pub replace_all: OwnedAccess,
+    pub allow_non_recursive_delete: bool,
 }
 
 /// Trait implemented by function route specifications.
