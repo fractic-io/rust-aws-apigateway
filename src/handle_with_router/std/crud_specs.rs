@@ -426,14 +426,11 @@ where
                             &self.access.list,
                             (self.owner_of_parent_id)(pid),
                         ),
-                        None => {
-                            let root = PkSk::root();
-                            is_allowed_owned_access(
-                                &metadata,
-                                &self.access.list,
-                                (self.owner_of_parent_id)(&root),
-                            )
-                        }
+                        None => is_allowed_owned_access(
+                            &metadata,
+                            &self.access.list,
+                            (self.owner_of_parent_id)(&PkSk::root()),
+                        ),
                     };
                     if !authorized {
                         return build_err(UnauthorizedError::new());
