@@ -30,7 +30,7 @@ pub enum CrudOperation<T: DynamoObject> {
         after: Option<PkSk>,
         data: T::Data,
     },
-    CreateBatch {
+    CreateMultiple {
         parent_id: Option<PkSk>,
         after: Option<PkSk>,
         data: Vec<T::Data>,
@@ -38,7 +38,7 @@ pub enum CrudOperation<T: DynamoObject> {
     Read {
         id: PkSk,
     },
-    ReadBatch {
+    ReadMultiple {
         ids: Vec<PkSk>,
     },
     Update {
@@ -48,7 +48,7 @@ pub enum CrudOperation<T: DynamoObject> {
         id: PkSk,
         non_recursive: bool,
     },
-    DeleteBatch {
+    DeleteMultiple {
         ids: Vec<PkSk>,
         non_recursive: bool,
     },
@@ -145,10 +145,10 @@ where
                     // Batch create if body is a list; fall back to single.
                     match parse_request_data::<Vec<T::Data>>(request) {
                         Ok(list) => {
-                            if !is_allowed_access(&metadata, &self.access.create_batch) {
+                            if !is_allowed_access(&metadata, &self.access.batch_create) {
                                 return build_err(UnauthorizedError::new());
                             }
-                            CrudOperation::CreateBatch {
+                            CrudOperation::CreateMultiple {
                                 parent_id,
                                 after,
                                 data: list,
@@ -182,14 +182,14 @@ where
                     };
                     CrudOperation::List { parent_id }
                 } else if let Some(res) = maybe_ids(request) {
-                    if !is_allowed_access(&metadata, &self.access.read_batch) {
+                    if !is_allowed_access(&metadata, &self.access.batch_read) {
                         return build_err(UnauthorizedError::new());
                     }
                     let ids = match res {
                         Ok(v) => v,
                         Err(e) => return build_err(e),
                     };
-                    CrudOperation::ReadBatch { ids }
+                    CrudOperation::ReadMultiple { ids }
                 } else {
                     if !is_allowed_access(&metadata, &self.access.read) {
                         return build_err(UnauthorizedError::new());
@@ -229,14 +229,14 @@ where
                         non_recursive,
                     }
                 } else if let Some(res) = maybe_ids(request) {
-                    if !is_allowed_access(&metadata, &self.access.delete_batch) {
+                    if !is_allowed_access(&metadata, &self.access.batch_delete) {
                         return build_err(UnauthorizedError::new());
                     }
                     let ids = match res {
                         Ok(v) => v,
                         Err(e) => return build_err(e),
                     };
-                    CrudOperation::DeleteBatch { ids, non_recursive }
+                    CrudOperation::DeleteMultiple { ids, non_recursive }
                 } else {
                     if !is_allowed_access(&metadata, &self.access.delete) {
                         return build_err(UnauthorizedError::new());
@@ -355,25 +355,25 @@ where
                     // Batch create if body is a list; fall back to single.
                     match parse_request_data::<Vec<T::Data>>(request) {
                         Ok(list) => {
-                            if !preliminary_access_check(&metadata, &self.access.create_batch) {
+                            if !preliminary_access_check(&metadata, &self.access.batch_create) {
                                 return build_err(UnauthorizedError::new());
                             }
                             let authorized = match parent_id {
                                 Some(ref pid) => is_allowed_owned_access(
                                     &metadata,
-                                    &self.access.create_batch,
+                                    &self.access.batch_create,
                                     (self.owner_of_parent_id)(pid),
                                 ),
                                 None => is_allowed_owned_access(
                                     &metadata,
-                                    &self.access.create_batch,
+                                    &self.access.batch_create,
                                     (self.owner_of_parent_id)(&PkSk::root()),
                                 ),
                             };
                             if !authorized {
                                 return build_err(UnauthorizedError::new());
                             }
-                            CrudOperation::CreateBatch {
+                            CrudOperation::CreateMultiple {
                                 parent_id,
                                 after,
                                 data: list,
@@ -440,7 +440,7 @@ where
                     }
                     CrudOperation::List { parent_id }
                 } else if let Some(res) = maybe_ids(request) {
-                    if !preliminary_access_check(&metadata, &self.access.read_batch) {
+                    if !preliminary_access_check(&metadata, &self.access.batch_read) {
                         return build_err(UnauthorizedError::new());
                     }
                     let ids = match res {
@@ -450,14 +450,14 @@ where
                     let all_authorized = ids.iter().all(|id| {
                         is_allowed_owned_access(
                             &metadata,
-                            &self.access.read_batch,
+                            &self.access.batch_read,
                             (self.owner_of_id)(id),
                         )
                     });
                     if !all_authorized {
                         return build_err(UnauthorizedError::new());
                     }
-                    CrudOperation::ReadBatch { ids }
+                    CrudOperation::ReadMultiple { ids }
                 } else {
                     if !preliminary_access_check(&metadata, &self.access.read) {
                         return build_err(UnauthorizedError::new());
@@ -520,7 +520,7 @@ where
                         non_recursive,
                     }
                 } else if let Some(res) = maybe_ids(request) {
-                    if !preliminary_access_check(&metadata, &self.access.delete_batch) {
+                    if !preliminary_access_check(&metadata, &self.access.batch_delete) {
                         return build_err(UnauthorizedError::new());
                     }
                     let ids = match res {
@@ -530,14 +530,14 @@ where
                     let all_authorized = ids.iter().all(|id| {
                         is_allowed_owned_access(
                             &metadata,
-                            &self.access.delete_batch,
+                            &self.access.batch_delete,
                             (self.owner_of_id)(id),
                         )
                     });
                     if !all_authorized {
                         return build_err(UnauthorizedError::new());
                     }
-                    CrudOperation::DeleteBatch { ids, non_recursive }
+                    CrudOperation::DeleteMultiple { ids, non_recursive }
                 } else {
                     if !preliminary_access_check(&metadata, &self.access.delete) {
                         return build_err(UnauthorizedError::new());
