@@ -22,7 +22,9 @@ use crate::{
 };
 
 pub enum CrudOperation<T: DynamoObject> {
-    List,
+    List {
+        parent_id: Option<PkSk>,
+    },
     Create {
         parent_id: Option<PkSk>,
         after: Option<PkSk>,
@@ -51,9 +53,11 @@ pub enum CrudOperation<T: DynamoObject> {
         non_recursive: bool,
     },
     DeleteAll {
+        parent_id: Option<PkSk>,
         non_recursive: bool,
     },
     ReplaceAll {
+        parent_id: Option<PkSk>,
         data: Vec<T::Data>,
     },
 }
@@ -120,11 +124,15 @@ where
                     if !is_allowed_access(&metadata, &self.access.replace_all) {
                         return build_err(UnauthorizedError::new());
                     }
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
                     let data = match parse_request_data::<Vec<T::Data>>(request) {
                         Ok(d) => d,
                         Err(e) => return build_err(e),
                     };
-                    CrudOperation::ReplaceAll { data }
+                    CrudOperation::ReplaceAll { parent_id, data }
                 } else {
                     let parent_id = match get_optional_pksk(request, "parent_id") {
                         Ok(v) => v,
@@ -168,7 +176,11 @@ where
                     if !is_allowed_access(&metadata, &self.access.list) {
                         return build_err(UnauthorizedError::new());
                     }
-                    CrudOperation::List
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::List { parent_id }
                 } else if let Some(res) = maybe_ids(request) {
                     if !is_allowed_access(&metadata, &self.access.read_batch) {
                         return build_err(UnauthorizedError::new());
@@ -208,7 +220,14 @@ where
                     if !is_allowed_access(&metadata, &self.access.delete_all) {
                         return build_err(UnauthorizedError::new());
                     }
-                    CrudOperation::DeleteAll { non_recursive }
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    CrudOperation::DeleteAll {
+                        parent_id,
+                        non_recursive,
+                    }
                 } else if let Some(res) = maybe_ids(request) {
                     if !is_allowed_access(&metadata, &self.access.delete_batch) {
                         return build_err(UnauthorizedError::new());
@@ -300,11 +319,22 @@ where
                     if !preliminary_access_check(&metadata, &self.access.replace_all) {
                         return build_err(UnauthorizedError::new());
                     }
-                    let authorized = is_allowed_owned_access(
-                        &metadata,
-                        &self.access.replace_all,
-                        (self.owner_of_parent_id)(&PkSk::root()),
-                    );
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    let authorized = match parent_id {
+                        Some(ref pid) => is_allowed_owned_access(
+                            &metadata,
+                            &self.access.replace_all,
+                            (self.owner_of_parent_id)(pid),
+                        ),
+                        None => is_allowed_owned_access(
+                            &metadata,
+                            &self.access.replace_all,
+                            (self.owner_of_parent_id)(&PkSk::root()),
+                        ),
+                    };
                     if !authorized {
                         return build_err(UnauthorizedError::new());
                     }
@@ -312,7 +342,7 @@ where
                         Ok(d) => d,
                         Err(e) => return build_err(e),
                     };
-                    CrudOperation::ReplaceAll { data }
+                    CrudOperation::ReplaceAll { parent_id, data }
                 } else {
                     let parent_id = match get_optional_pksk(request, "parent_id") {
                         Ok(v) => v,
@@ -386,15 +416,29 @@ where
                     if !preliminary_access_check(&metadata, &self.access.list) {
                         return build_err(UnauthorizedError::new());
                     }
-                    let authorized = is_allowed_owned_access(
-                        &metadata,
-                        &self.access.list,
-                        (self.owner_of_parent_id)(&PkSk::root()),
-                    );
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    let authorized = match parent_id.as_ref() {
+                        Some(pid) => is_allowed_owned_access(
+                            &metadata,
+                            &self.access.list,
+                            (self.owner_of_parent_id)(pid),
+                        ),
+                        None => {
+                            let root = PkSk::root();
+                            is_allowed_owned_access(
+                                &metadata,
+                                &self.access.list,
+                                (self.owner_of_parent_id)(&root),
+                            )
+                        }
+                    };
                     if !authorized {
                         return build_err(UnauthorizedError::new());
                     }
-                    CrudOperation::List
+                    CrudOperation::List { parent_id }
                 } else if let Some(res) = maybe_ids(request) {
                     if !preliminary_access_check(&metadata, &self.access.read_batch) {
                         return build_err(UnauthorizedError::new());
@@ -452,15 +496,29 @@ where
                     if !preliminary_access_check(&metadata, &self.access.delete_all) {
                         return build_err(UnauthorizedError::new());
                     }
-                    let authorized = is_allowed_owned_access(
-                        &metadata,
-                        &self.access.delete_all,
-                        (self.owner_of_parent_id)(&PkSk::root()),
-                    );
+                    let parent_id = match get_optional_pksk(request, "parent_id") {
+                        Ok(v) => v,
+                        Err(e) => return build_err(e),
+                    };
+                    let authorized = match parent_id {
+                        Some(ref pid) => is_allowed_owned_access(
+                            &metadata,
+                            &self.access.delete_all,
+                            (self.owner_of_parent_id)(pid),
+                        ),
+                        None => is_allowed_owned_access(
+                            &metadata,
+                            &self.access.delete_all,
+                            (self.owner_of_parent_id)(&PkSk::root()),
+                        ),
+                    };
                     if !authorized {
                         return build_err(UnauthorizedError::new());
                     }
-                    CrudOperation::DeleteAll { non_recursive }
+                    CrudOperation::DeleteAll {
+                        parent_id,
+                        non_recursive,
+                    }
                 } else if let Some(res) = maybe_ids(request) {
                     if !preliminary_access_check(&metadata, &self.access.delete_batch) {
                         return build_err(UnauthorizedError::new());
