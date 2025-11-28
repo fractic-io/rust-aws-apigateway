@@ -38,10 +38,17 @@ pub enum Access {
 
 #[derive(Debug, Default)]
 pub struct CrudAccess {
+    pub list: Access,
     pub create: Access,
+    pub batch_create: Access,
     pub read: Access,
+    pub batch_read: Access,
     pub update: Access,
     pub delete: Access,
+    pub batch_delete: Access,
+    pub delete_all: Access,
+    pub replace_all: Access,
+    pub allow_non_recursive_delete: bool,
 }
 
 /// Access control for owned routes.
@@ -64,10 +71,17 @@ pub enum OwnedAccess {
 
 #[derive(Debug, Default)]
 pub struct OwnedCrudAccess {
+    pub list: OwnedAccess,
     pub create: OwnedAccess,
+    pub batch_create: OwnedAccess,
     pub read: OwnedAccess,
+    pub batch_read: OwnedAccess,
     pub update: OwnedAccess,
     pub delete: OwnedAccess,
+    pub batch_delete: OwnedAccess,
+    pub delete_all: OwnedAccess,
+    pub replace_all: OwnedAccess,
+    pub allow_non_recursive_delete: bool,
 }
 
 /// Trait implemented by function route specifications.
