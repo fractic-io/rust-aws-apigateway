@@ -23,7 +23,7 @@ define_sensitive_error!(
 // --------------------------------------------------
 
 /// Access control for non-owned routes.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub enum Access {
     /// Any user, including unauthenticated users.
     Guest,
@@ -32,7 +32,6 @@ pub enum Access {
     /// Only admin users.
     Admin,
     /// All access is denied.
-    #[default]
     None,
 }
 
@@ -66,7 +65,7 @@ impl Default for CrudAccess {
 }
 
 /// Access control for owned routes.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub enum OwnedAccess {
     /// Any user, including unauthenticated users.
     Guest,
@@ -79,7 +78,6 @@ pub enum OwnedAccess {
     /// Owner or admin users.
     OwnerOrAdmin,
     /// All access is denied.
-    #[default]
     None,
 }
 
