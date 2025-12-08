@@ -408,7 +408,6 @@ where
             Ok(m) => m,
             Err(e) => return build_err(e),
         };
-        let root_id = PkSk::root();
         let method = &request.http_method;
         let op = match method {
             &Method::POST => {
@@ -420,19 +419,11 @@ where
                         Ok(v) => v,
                         Err(e) => return build_err(e),
                     };
-                    let authorized = match parent_id {
-                        Some(ref pid) => is_allowed_owned_access(
-                            &metadata,
-                            &self.access.replace_all,
-                            (self.owner_of_parent_id)(pid),
-                        ),
-                        None => is_allowed_owned_access(
-                            &metadata,
-                            &self.access.replace_all,
-                            (self.owner_of_parent_id)(&root_id),
-                        ),
-                    };
-                    if !authorized {
+                    if !is_allowed_owned_access(
+                        &metadata,
+                        &self.access.replace_all,
+                        (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                    ) {
                         return build_err(UnauthorizedError::new());
                     }
                     let data = match parse_request_data::<Vec<T::Data>>(request) {
@@ -458,19 +449,13 @@ where
                             if !self.access.allow_batching {
                                 return build_err(UnauthorizedError::new());
                             }
-                            let authorized = match parent_id {
-                                Some(ref pid) => is_allowed_owned_access(
-                                    &metadata,
-                                    &self.access.create,
-                                    (self.owner_of_parent_id)(pid),
+                            if !is_allowed_owned_access(
+                                &metadata,
+                                &self.access.create,
+                                (self.owner_of_parent_id)(
+                                    parent_id.as_ref().unwrap_or(PkSk::root()),
                                 ),
-                                None => is_allowed_owned_access(
-                                    &metadata,
-                                    &self.access.create,
-                                    (self.owner_of_parent_id)(&root_id),
-                                ),
-                            };
-                            if !authorized {
+                            ) {
                                 return build_err(UnauthorizedError::new());
                             }
                             CrudOperation::CreateMultiple {
@@ -480,19 +465,13 @@ where
                             }
                         }
                         Err(_) => {
-                            let authorized = match parent_id {
-                                Some(ref pid) => is_allowed_owned_access(
-                                    &metadata,
-                                    &self.access.create,
-                                    (self.owner_of_parent_id)(pid),
+                            if !is_allowed_owned_access(
+                                &metadata,
+                                &self.access.create,
+                                (self.owner_of_parent_id)(
+                                    parent_id.as_ref().unwrap_or(PkSk::root()),
                                 ),
-                                None => is_allowed_owned_access(
-                                    &metadata,
-                                    &self.access.create,
-                                    (self.owner_of_parent_id)(&root_id),
-                                ),
-                            };
-                            if !authorized {
+                            ) {
                                 return build_err(UnauthorizedError::new());
                             }
                             let data = match parse_request_data::<T::Data>(request) {
@@ -517,19 +496,11 @@ where
                         Ok(v) => v,
                         Err(e) => return build_err(e),
                     };
-                    let authorized = match parent_id.as_ref() {
-                        Some(pid) => is_allowed_owned_access(
-                            &metadata,
-                            &self.access.list,
-                            (self.owner_of_parent_id)(pid),
-                        ),
-                        None => is_allowed_owned_access(
-                            &metadata,
-                            &self.access.list,
-                            (self.owner_of_parent_id)(&root_id),
-                        ),
-                    };
-                    if !authorized {
+                    if !is_allowed_owned_access(
+                        &metadata,
+                        &self.access.list,
+                        (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                    ) {
                         return build_err(UnauthorizedError::new());
                     }
                     CrudOperation::List { parent_id }
@@ -566,11 +537,11 @@ where
                             Ok(v) => v,
                             Err(e) => return build_err(e),
                         };
-                        let owner = match parent_id.as_ref() {
-                            Some(pid) => (self.owner_of_parent_id)(pid),
-                            None => (self.owner_of_parent_id)(&root_id),
-                        };
-                        if !is_allowed_owned_access(&metadata, &self.access.read, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.read,
+                            (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::ReadMultiple {
@@ -584,8 +555,11 @@ where
                             Ok(id) => id,
                             Err(e) => return build_err(e),
                         };
-                        let owner = (self.owner_of_id)(&id);
-                        if !is_allowed_owned_access(&metadata, &self.access.read, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.read,
+                            (self.owner_of_id)(&id),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::Read {
@@ -596,11 +570,11 @@ where
                             Ok(v) => v,
                             Err(e) => return build_err(e),
                         };
-                        let owner = match parent_id.as_ref() {
-                            Some(pid) => (self.owner_of_parent_id)(pid),
-                            None => (self.owner_of_parent_id)(&root_id),
-                        };
-                        if !is_allowed_owned_access(&metadata, &self.access.read, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.read,
+                            (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::Read {
@@ -611,11 +585,11 @@ where
                             Ok(v) => v,
                             Err(e) => return build_err(e),
                         };
-                        let owner = match parent_id.as_ref() {
-                            Some(pid) => (self.owner_of_parent_id)(pid),
-                            None => (self.owner_of_parent_id)(&root_id),
-                        };
-                        if !is_allowed_owned_access(&metadata, &self.access.read, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.read,
+                            (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::Read {
@@ -632,8 +606,11 @@ where
                     Ok(i) => i,
                     Err(e) => return build_err(e),
                 };
-                let owner = (self.owner_of_id)(item.id());
-                if !is_allowed_owned_access(&metadata, &self.access.update, owner) {
+                if !is_allowed_owned_access(
+                    &metadata,
+                    &self.access.update,
+                    (self.owner_of_id)(item.id()),
+                ) {
                     return build_err(UnauthorizedError::new());
                 }
                 CrudOperation::Update { item }
@@ -651,19 +628,11 @@ where
                         Ok(v) => v,
                         Err(e) => return build_err(e),
                     };
-                    let authorized = match parent_id {
-                        Some(ref pid) => is_allowed_owned_access(
-                            &metadata,
-                            &self.access.delete_all,
-                            (self.owner_of_parent_id)(pid),
-                        ),
-                        None => is_allowed_owned_access(
-                            &metadata,
-                            &self.access.delete_all,
-                            (self.owner_of_parent_id)(&root_id),
-                        ),
-                    };
-                    if !authorized {
+                    if !is_allowed_owned_access(
+                        &metadata,
+                        &self.access.delete_all,
+                        (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                    ) {
                         return build_err(UnauthorizedError::new());
                     }
                     CrudOperation::DeleteAll {
@@ -704,11 +673,11 @@ where
                             Ok(v) => v,
                             Err(e) => return build_err(e),
                         };
-                        let owner = match parent_id.as_ref() {
-                            Some(pid) => (self.owner_of_parent_id)(pid),
-                            None => (self.owner_of_parent_id)(&root_id),
-                        };
-                        if !is_allowed_owned_access(&metadata, &self.access.delete, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.delete,
+                            (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::DeleteMultiple {
@@ -723,8 +692,11 @@ where
                             Ok(id) => id,
                             Err(e) => return build_err(e),
                         };
-                        let owner = (self.owner_of_id)(&id);
-                        if !is_allowed_owned_access(&metadata, &self.access.delete, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.delete,
+                            (self.owner_of_id)(&id),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::Delete {
@@ -736,11 +708,11 @@ where
                             Ok(v) => v,
                             Err(e) => return build_err(e),
                         };
-                        let owner = match parent_id.as_ref() {
-                            Some(pid) => (self.owner_of_parent_id)(pid),
-                            None => (self.owner_of_parent_id)(&root_id),
-                        };
-                        if !is_allowed_owned_access(&metadata, &self.access.delete, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.delete,
+                            (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::Delete {
@@ -752,11 +724,11 @@ where
                             Ok(v) => v,
                             Err(e) => return build_err(e),
                         };
-                        let owner = match parent_id.as_ref() {
-                            Some(pid) => (self.owner_of_parent_id)(pid),
-                            None => (self.owner_of_parent_id)(&root_id),
-                        };
-                        if !is_allowed_owned_access(&metadata, &self.access.delete, owner) {
+                        if !is_allowed_owned_access(
+                            &metadata,
+                            &self.access.delete,
+                            (self.owner_of_parent_id)(parent_id.as_ref().unwrap_or(PkSk::root())),
+                        ) {
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::Delete {
