@@ -36,7 +36,7 @@ pub enum ItemRefs {
     Id(Vec<PkSk>),
     Key {
         parent_id: Option<PkSk>,
-        key: Vec<String>,
+        keys: Vec<String>,
     },
 }
 
@@ -224,10 +224,7 @@ where
                             Err(e) => return build_err(e),
                         };
                         CrudOperation::ReadMultiple {
-                            item_refs: ItemRefs::Key {
-                                parent_id,
-                                key: keys,
-                            },
+                            item_refs: ItemRefs::Key { parent_id, keys },
                         }
                     } else if let Some(res) = maybe_id(request) {
                         let id = match res {
@@ -308,10 +305,7 @@ where
                             Err(e) => return build_err(e),
                         };
                         CrudOperation::DeleteMultiple {
-                            item_refs: ItemRefs::Key {
-                                parent_id,
-                                key: keys,
-                            },
+                            item_refs: ItemRefs::Key { parent_id, keys },
                             non_recursive,
                         }
                     } else if let Some(res) = maybe_id(request) {
@@ -545,10 +539,7 @@ where
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::ReadMultiple {
-                            item_refs: ItemRefs::Key {
-                                parent_id,
-                                key: keys,
-                            },
+                            item_refs: ItemRefs::Key { parent_id, keys },
                         }
                     } else if let Some(res) = maybe_id(request) {
                         let id = match res {
@@ -681,10 +672,7 @@ where
                             return build_err(UnauthorizedError::new());
                         }
                         CrudOperation::DeleteMultiple {
-                            item_refs: ItemRefs::Key {
-                                parent_id,
-                                key: keys,
-                            },
+                            item_refs: ItemRefs::Key { parent_id, keys },
                             non_recursive,
                         }
                     } else if let Some(res) = maybe_id(request) {
