@@ -23,7 +23,7 @@ define_sensitive_error!(
 // --------------------------------------------------
 
 /// Access control for non-owned routes.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub enum Access {
     /// Any user, including unauthenticated users.
     Guest,
@@ -32,27 +32,40 @@ pub enum Access {
     /// Only admin users.
     Admin,
     /// All access is denied.
-    #[default]
     None,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CrudAccess {
     pub list: Access,
     pub create: Access,
-    pub batch_create: Access,
     pub read: Access,
-    pub batch_read: Access,
     pub update: Access,
     pub delete: Access,
-    pub batch_delete: Access,
     pub delete_all: Access,
     pub replace_all: Access,
     pub allow_non_recursive_delete: bool,
+    pub allow_batching: bool,
+}
+
+impl Default for CrudAccess {
+    fn default() -> Self {
+        Self {
+            list: Access::None,
+            create: Access::None,
+            read: Access::None,
+            update: Access::None,
+            delete: Access::None,
+            delete_all: Access::None,
+            replace_all: Access::None,
+            allow_non_recursive_delete: false,
+            allow_batching: true,
+        }
+    }
 }
 
 /// Access control for owned routes.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub enum OwnedAccess {
     /// Any user, including unauthenticated users.
     Guest,
@@ -65,23 +78,36 @@ pub enum OwnedAccess {
     /// Owner or admin users.
     OwnerOrAdmin,
     /// All access is denied.
-    #[default]
     None,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OwnedCrudAccess {
     pub list: OwnedAccess,
     pub create: OwnedAccess,
-    pub batch_create: OwnedAccess,
     pub read: OwnedAccess,
-    pub batch_read: OwnedAccess,
     pub update: OwnedAccess,
     pub delete: OwnedAccess,
-    pub batch_delete: OwnedAccess,
     pub delete_all: OwnedAccess,
     pub replace_all: OwnedAccess,
     pub allow_non_recursive_delete: bool,
+    pub allow_batching: bool,
+}
+
+impl Default for OwnedCrudAccess {
+    fn default() -> Self {
+        Self {
+            list: OwnedAccess::None,
+            create: OwnedAccess::None,
+            read: OwnedAccess::None,
+            update: OwnedAccess::None,
+            delete: OwnedAccess::None,
+            delete_all: OwnedAccess::None,
+            replace_all: OwnedAccess::None,
+            allow_non_recursive_delete: false,
+            allow_batching: true,
+        }
+    }
 }
 
 /// Trait implemented by function route specifications.
