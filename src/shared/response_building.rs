@@ -46,16 +46,24 @@ struct ResponseWrapper {
     error: Option<String>,
 }
 
+fn build_response(
+    status_code: i64,
+    content_type: ContentType,
+    body: Body,
+    is_base64_encoded: bool,
+) -> ApiGatewayProxyResponse {
+    let mut response = ApiGatewayProxyResponse::default();
+    response.status_code = status_code;
+    response.headers = build_headers(content_type);
+    response.body = Some(body);
+    response.is_base64_encoded = is_base64_encoded;
+    response
+}
+
 pub fn build_simple(data: impl Into<Body>) -> ApiGatewayProxyResponse {
     let body: Body = data.into();
     let is_b64 = matches!(body, Body::Binary(_));
-    ApiGatewayProxyResponse {
-        status_code: 200,
-        headers: build_headers(ContentType::Text),
-        multi_value_headers: Default::default(),
-        body: Some(body),
-        is_base64_encoded: is_b64,
-    }
+    build_response(200, ContentType::Text, body, is_b64)
 }
 
 pub fn build_result<T>(result: Result<T, ServerError>) -> Result<ApiGatewayProxyResponse, Error>
@@ -78,13 +86,12 @@ where
         data: Some(payload),
         error: None,
     };
-    let resp = ApiGatewayProxyResponse {
-        status_code: 200,
-        headers: build_headers(ContentType::Json),
-        multi_value_headers: Default::default(),
-        body: Some(serde_json::to_string(&wrapper)?.into()),
-        is_base64_encoded: false,
-    };
+    let resp = build_response(
+        200,
+        ContentType::Json,
+        serde_json::to_string(&wrapper)?.into(),
+        false,
+    );
     Ok(resp)
 }
 
@@ -111,29 +118,27 @@ pub(crate) fn build_err(error: ServerError) -> Result<ApiGatewayProxyResponse, E
             data: None,
             error: Some(public_msg.into()),
         };
-        Ok::<_, Error>(ApiGatewayProxyResponse {
-            // Outer status code should still be 200 for client-errors,
-            // otherwise Amplify will treat it as a server error. The client
-            // will know there is a client error because ok == false.
-            status_code: 200,
-            headers: build_headers(ContentType::Json),
-            multi_value_headers: Default::default(),
-            body: Some(serde_json::to_string(&wrapper)?.into()),
-            is_base64_encoded: false,
-        })
+        // Outer status code should still be 200 for client-errors, otherwise Amplify
+        // will treat it as a server error. The client will know there is a client
+        // error because ok == false.
+        Ok::<_, Error>(build_response(
+            200,
+            ContentType::Json,
+            serde_json::to_string(&wrapper)?.into(),
+            false,
+        ))
     };
 
     // 2) Return an error response, triggerring alerting, affecting lambda
     // statistics, and avoiding leaking any error data to the client.
     let error_response = |error_code: i64, public_msg: &str| {
         eprintln!("ERROR\n{}", error);
-        Ok::<_, Error>(ApiGatewayProxyResponse {
-            status_code: error_code,
-            headers: build_headers(ContentType::Text),
-            multi_value_headers: Default::default(),
-            body: Some(public_msg.into()),
-            is_base64_encoded: false,
-        })
+        Ok::<_, Error>(build_response(
+            error_code,
+            ContentType::Text,
+            public_msg.into(),
+            false,
+        ))
     };
 
     // Decide based on the error behaviour type.
