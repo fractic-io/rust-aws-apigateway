@@ -58,32 +58,24 @@ mod tests {
     };
 
     fn create_authenticated_request() -> ApiGatewayProxyRequest {
-        ApiGatewayProxyRequest {
-            request_context: ApiGatewayProxyRequestContext {
-                authorizer: ApiGatewayRequestAuthorizer {
-                    fields: [(
-                        "claims".into(),
-                        serde_json::json!({
-                            "cognito:username": "FakeUsername",
-                            "sub": "FakeUserSub"
-                        }),
-                    )]
-                    .into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        let mut request = ApiGatewayProxyRequest::default();
+        let mut request_context = ApiGatewayProxyRequestContext::default();
+        let mut authorizer = ApiGatewayRequestAuthorizer::default();
+        authorizer.fields = [(
+            "claims".into(),
+            serde_json::json!({
+                "cognito:username": "FakeUsername",
+                "sub": "FakeUserSub"
+            }),
+        )]
+        .into();
+        request_context.authorizer = authorizer;
+        request.request_context = request_context;
+        request
     }
 
     fn create_unauthenticated_request() -> ApiGatewayProxyRequest {
-        ApiGatewayProxyRequest {
-            request_context: ApiGatewayProxyRequestContext {
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        ApiGatewayProxyRequest::default()
     }
 
     #[test]

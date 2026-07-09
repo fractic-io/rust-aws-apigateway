@@ -57,12 +57,15 @@ mod tests {
         key: String,
     }
 
+    fn request_with_body(body: Option<&str>) -> ApiGatewayProxyRequest {
+        let mut request = ApiGatewayProxyRequest::default();
+        request.body = body.map(str::to_owned);
+        request
+    }
+
     #[test]
     fn test_parse_request() {
-        let request = ApiGatewayProxyRequest {
-            body: Some("{\"key\":\"value\"}".to_string()),
-            ..Default::default()
-        };
+        let request = request_with_body(Some("{\"key\":\"value\"}"));
         let result = parse_request_data::<TestData>(&request);
         assert_eq!(
             result.unwrap(),
@@ -74,10 +77,7 @@ mod tests {
 
     #[test]
     fn test_parse_request_missing_body() {
-        let request = ApiGatewayProxyRequest {
-            body: None,
-            ..Default::default()
-        };
+        let request = request_with_body(None);
         let result = parse_request_data::<TestData>(&request);
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("missing request body"));
@@ -85,20 +85,14 @@ mod tests {
 
     #[test]
     fn test_parse_request_invalid_json() {
-        let request = ApiGatewayProxyRequest {
-            body: Some("{invalid}".to_string()),
-            ..Default::default()
-        };
+        let request = request_with_body(Some("{invalid}"));
         let result = parse_request_data::<TestData>(&request);
         assert!(format!("{:?}", result.unwrap_err()).contains("InvalidRequestError"));
     }
 
     #[test]
     fn test_parse_request_valid_json_wrong_type() {
-        let request = ApiGatewayProxyRequest {
-            body: Some("{\"different_key\":\"value\"}".to_string()),
-            ..Default::default()
-        };
+        let request = request_with_body(Some("{\"different_key\":\"value\"}"));
         let result = parse_request_data::<TestData>(&request);
         assert!(format!("{:?}", result.unwrap_err()).contains("InvalidRequestError"));
     }
