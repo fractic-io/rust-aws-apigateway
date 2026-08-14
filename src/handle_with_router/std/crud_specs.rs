@@ -6,7 +6,7 @@ use aws_lambda_events::{
 use fractic_aws_dynamo::schema::{DynamoObject, PkSk};
 use fractic_server_error::{CriticalError, ServerError};
 use lambda_runtime::Error;
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize};
 use std::pin::Pin;
 
 use crate::{
@@ -21,6 +21,8 @@ use crate::{
     CrudAccess, OwnedCrudAccess, Validation,
 };
 
+#[derive(Deserialize)]
+#[serde(untagged)]
 pub enum ItemRef {
     Id(PkSk),
     Key {
@@ -32,6 +34,8 @@ pub enum ItemRef {
     },
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
 pub enum ItemRefs {
     Id(Vec<PkSk>),
     Key {
@@ -40,6 +44,8 @@ pub enum ItemRefs {
     },
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", bound(deserialize = ""))]
 pub enum CrudOperation<T: DynamoObject> {
     List {
         parent_id: Option<PkSk>,
@@ -819,4 +825,24 @@ fn maybe_keys(
         let parent_id = get_optional_pksk(request, "parent_id")?;
         Ok((parent_id, keys))
     })
+}
+
+// Tests.
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod transport_tests {
+    use super::{ItemRef, ItemRefs};
+
+    #[test]
+    fn deserializes_id_and_key_references_for_generated_transports() {
+        let id: ItemRef = serde_json::from_str(r#""ROOT|THING#1""#).unwrap();
+        assert!(matches!(id, ItemRef::Id(_)));
+
+        let key: ItemRef = serde_json::from_str(r#"{"parent_id":null,"key":"active"}"#).unwrap();
+        assert!(matches!(key, ItemRef::Key { key, .. } if key == "active"));
+
+        let ids: ItemRefs = serde_json::from_str(r#"["ROOT|THING#1","ROOT|THING#2"]"#).unwrap();
+        assert!(matches!(ids, ItemRefs::Id(ids) if ids.len() == 2));
+    }
 }
