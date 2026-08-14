@@ -87,23 +87,6 @@ pub enum CrudOperation<T: DynamoObject> {
     },
 }
 
-#[cfg(test)]
-mod transport_tests {
-    use super::{ItemRef, ItemRefs};
-
-    #[test]
-    fn deserializes_id_and_key_references_for_generated_transports() {
-        let id: ItemRef = serde_json::from_str(r#""ROOT|THING#1""#).unwrap();
-        assert!(matches!(id, ItemRef::Id(_)));
-
-        let key: ItemRef = serde_json::from_str(r#"{"parent_id":null,"key":"active"}"#).unwrap();
-        assert!(matches!(key, ItemRef::Key { key, .. } if key == "active"));
-
-        let ids: ItemRefs = serde_json::from_str(r#"["ROOT|THING#1","ROOT|THING#2"]"#).unwrap();
-        assert!(matches!(ids, ItemRefs::Id(ids) if ids.len() == 2));
-    }
-}
-
 type BoxedCrudHandler<T, O> = Box<
     dyn Fn(
             CrudOperation<T>,
@@ -842,4 +825,24 @@ fn maybe_keys(
         let parent_id = get_optional_pksk(request, "parent_id")?;
         Ok((parent_id, keys))
     })
+}
+
+// Tests.
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod transport_tests {
+    use super::{ItemRef, ItemRefs};
+
+    #[test]
+    fn deserializes_id_and_key_references_for_generated_transports() {
+        let id: ItemRef = serde_json::from_str(r#""ROOT|THING#1""#).unwrap();
+        assert!(matches!(id, ItemRef::Id(_)));
+
+        let key: ItemRef = serde_json::from_str(r#"{"parent_id":null,"key":"active"}"#).unwrap();
+        assert!(matches!(key, ItemRef::Key { key, .. } if key == "active"));
+
+        let ids: ItemRefs = serde_json::from_str(r#"["ROOT|THING#1","ROOT|THING#2"]"#).unwrap();
+        assert!(matches!(ids, ItemRefs::Id(ids) if ids.len() == 2));
+    }
 }
