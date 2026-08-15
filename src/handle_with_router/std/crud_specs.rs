@@ -71,14 +71,17 @@ pub enum CrudOperation<T: DynamoObject> {
     },
     Delete {
         item_ref: ItemRef,
+        #[serde(default)]
         non_recursive: bool,
     },
     DeleteMultiple {
         item_refs: ItemRefs,
+        #[serde(default)]
         non_recursive: bool,
     },
     DeleteAll {
         parent_id: Option<PkSk>,
+        #[serde(default)]
         non_recursive: bool,
     },
     ReplaceAll {
@@ -832,7 +835,24 @@ fn maybe_keys(
 
 #[cfg(test)]
 mod transport_tests {
-    use super::{ItemRef, ItemRefs};
+    use fractic_aws_dynamo::{
+        dynamo_object,
+        schema::{IdLogic, NestingLogic},
+    };
+    use serde::{Deserialize, Serialize};
+
+    use super::{CrudOperation, ItemRef, ItemRefs};
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+    pub struct TestData;
+
+    dynamo_object!(
+        TestObject,
+        TestData,
+        "TEST",
+        IdLogic::Uuid,
+        NestingLogic::Root
+    );
 
     #[test]
     fn deserializes_id_and_key_references_for_generated_transports() {
@@ -844,5 +864,51 @@ mod transport_tests {
 
         let ids: ItemRefs = serde_json::from_str(r#"["ROOT|THING#1","ROOT|THING#2"]"#).unwrap();
         assert!(matches!(ids, ItemRefs::Id(ids) if ids.len() == 2));
+    }
+
+    #[test]
+    fn delete_operations_default_to_recursive() {
+        let omitted: CrudOperation<TestObject> =
+            serde_json::from_str(r#"{"operation":"delete","item_ref":"ROOT|TEST#1"}"#).unwrap();
+        assert!(matches!(
+            omitted,
+            CrudOperation::Delete {
+                non_recursive: false,
+                ..
+            }
+        ));
+
+        let omitted: CrudOperation<TestObject> =
+            serde_json::from_str(r#"{"operation":"delete_multiple","item_refs":["ROOT|TEST#1"]}"#)
+                .unwrap();
+        assert!(matches!(
+            omitted,
+            CrudOperation::DeleteMultiple {
+                non_recursive: false,
+                ..
+            }
+        ));
+
+        let omitted: CrudOperation<TestObject> =
+            serde_json::from_str(r#"{"operation":"delete_all"}"#).unwrap();
+        assert!(matches!(
+            omitted,
+            CrudOperation::DeleteAll {
+                non_recursive: false,
+                ..
+            }
+        ));
+
+        let explicit: CrudOperation<TestObject> = serde_json::from_str(
+            r#"{"operation":"delete","item_ref":"ROOT|TEST#1","non_recursive":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            explicit,
+            CrudOperation::Delete {
+                non_recursive: true,
+                ..
+            }
+        ));
     }
 }
