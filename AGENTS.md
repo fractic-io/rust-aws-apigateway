@@ -7,7 +7,7 @@ Gateway Lambda (`aws_lambda_handle_raw!`, `aws_lambda_handle_with_function!`,
 `OwnedFunction`, `Crud`, `Access`, `Validation`, `AdminOnly`), request
 parsing / auth, JSON response building and the standard API errors.
 Consumer side: `/efs/fractic/_/rust.md` §3 and
-`app/backend/_/adding_an_endpoint.md`.
+`/efs/fractic/app/backend/_/adding_an_endpoint.md`.
 
 `src/lib.rs` → `handle_raw/macros.rs`, `handle_with_function/macros.rs`,
 `handle_with_router/{macros.rs, routing_config.rs,
