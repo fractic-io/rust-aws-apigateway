@@ -22,4 +22,3 @@ std/{crud_specs,function_specs,validators}.rs}`,
 - CORS headers are hard-coded for `https://fractic.io` in
   `response_building.rs`; the response shape is parsed by the Flutter
   `ApiUtil`, so changing it is a frontend change too.
-- Commit / PR titles: `[crud] …`, `[router] …`.
