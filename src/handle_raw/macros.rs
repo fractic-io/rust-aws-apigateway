@@ -10,6 +10,7 @@ macro_rules! aws_lambda_handle_raw {
                 // Disable printing time since CloudWatch already logs ingestion time.
                 .without_time()
                 .init();
+            $crate::install_lambda_error_sink(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
             ::lambda_runtime::run(::lambda_runtime::service_fn($handler)).await
         }

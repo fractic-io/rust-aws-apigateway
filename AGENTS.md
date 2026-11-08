@@ -12,13 +12,17 @@ Consumer side: `/efs/fractic/_/rust.md` §3 and
 `src/lib.rs` → `handle_raw/macros.rs`, `handle_with_function/macros.rs`,
 `handle_with_router/{macros.rs, routing_config.rs,
 std/{crud_specs,function_specs,validators}.rs}`,
-`shared/{auth_utils,request_processing,response_building}.rs`,
+`shared/{auth_utils,error_sink,request_processing,response_building}.rs`,
 `constants.rs`, `errors.rs`. `serde_json` is remapped to
 `serde_json_path_to_error` crate-wide.
 
 - Verify macro changes by building `app/backend/api/v1` through its
   `[patch]`; generated code may only use paths that resolve there
   (`fractic_*`, `serde_json`, `lambda_runtime`, `aws_lambda_events`).
+- `aws_lambda_handle_raw!` installs the error sink (`error_sink.rs`): every
+  constructed `ServerError` and every panic is one JSON `ErrorRecord` line
+  on stdout for the nightly error triage, next to the `ERROR` lines
+  `build_err` prints for escaped errors, which the log group's alarm counts.
 - CORS headers are hard-coded for `https://fractic.io` in
   `response_building.rs`; the response shape is parsed by the Flutter
   `ApiUtil`, so changing it is a frontend change too.
