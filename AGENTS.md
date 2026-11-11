@@ -16,8 +16,8 @@ std/{crud_specs,function_specs,validators}.rs}`,
 `constants.rs`, `errors.rs`. `serde_json` is remapped to
 `serde_json_path_to_error` crate-wide.
 
-- Verify macro changes by building `app/backend/api/v1` through its
-  `[patch]`; generated code may only use paths that resolve there
+- Verify macro changes by building `app/backend/api/v1`, which compiles this
+  checkout; generated code may only use paths that resolve there
   (`fractic_*`, `serde_json`, `lambda_runtime`, `aws_lambda_events`).
 - CORS headers are hard-coded for `https://fractic.io` in
   `response_building.rs`; the response shape is parsed by the Flutter
