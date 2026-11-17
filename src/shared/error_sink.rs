@@ -11,14 +11,14 @@ use fractic_server_error::{install_error_sink, ErrorOrigin, ErrorRecord};
 
 /// Installed by `aws_lambda_handle_raw!` before the runtime starts; a second
 /// call changes nothing. `source` is the consumer crate's name. The origin's
-/// environment comes from `ENVIRONMENT`, its session from the Lambda's
+/// environment comes from `ENVIRONMENT`, its entry from the Lambda's
 /// function name and its version from `API_VERSION` (`v1`), falling back to
 /// the consumer's crate version.
 pub fn install_lambda_error_sink(source: &str, crate_version: &str) {
     let origin = ErrorOrigin {
         source: source.to_owned(),
         env: env::var("ENVIRONMENT").ok().filter(|v| !v.is_empty()),
-        session: env::var("AWS_LAMBDA_FUNCTION_NAME").ok(),
+        entry: env::var("AWS_LAMBDA_FUNCTION_NAME").ok(),
         version: Some(
             env::var("API_VERSION")
                 .ok()
