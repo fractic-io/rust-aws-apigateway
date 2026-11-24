@@ -43,6 +43,10 @@ impl<O> NullaryFunction<O>
 where
     O: serde::Serialize + Send + 'static,
 {
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "routing tables hold specs as `Box<dyn FunctionSpec>`, which `new` returns"
+    )]
     pub fn new<H, Fut>(
         access: Access,
         validation: Validation<()>,
@@ -98,6 +102,10 @@ where
     I: DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "routing tables hold specs as `Box<dyn FunctionSpec>`, which `new` returns"
+    )]
     pub fn new<H, Fut>(
         access: Access,
         validation: Validation<I>,
@@ -159,6 +167,10 @@ where
     I: DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "routing tables hold specs as `Box<dyn FunctionSpec>`, which `new` returns"
+    )]
     pub fn new<H, Fut, FOwner>(
         owner_of: FOwner,
         access: OwnedAccess,

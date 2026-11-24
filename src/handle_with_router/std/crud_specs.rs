@@ -114,6 +114,10 @@ where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "routing tables hold specs as `Box<dyn CrudSpec>`, which `new` returns"
+    )]
     pub fn new<H, Fut>(
         access: CrudAccess,
         validation: Validation<CrudOperation<T>>,
@@ -146,8 +150,8 @@ where
             Err(e) => return build_err(e),
         };
         let method = &request.http_method;
-        let op = match method {
-            &Method::POST => {
+        let op = match *method {
+            Method::POST => {
                 if has_flag(request, "replace_all") {
                     if !is_allowed_access(&metadata, &self.access.replace_all) {
                         return build_err(UnauthorizedError::new());
@@ -199,7 +203,7 @@ where
                     }
                 }
             }
-            &Method::GET => {
+            Method::GET => {
                 if has_flag(request, "all") {
                     if !is_allowed_access(&metadata, &self.access.list) {
                         return build_err(UnauthorizedError::new());
@@ -262,7 +266,7 @@ where
                     }
                 }
             }
-            &Method::PUT => {
+            Method::PUT => {
                 if !is_allowed_access(&metadata, &self.access.update) {
                     return build_err(UnauthorizedError::new());
                 }
@@ -272,7 +276,7 @@ where
                 };
                 CrudOperation::Update { item }
             }
-            &Method::DELETE => {
+            Method::DELETE => {
                 let non_recursive = has_flag(request, "non_recursive");
                 if non_recursive && !self.access.allow_non_recursive_delete {
                     return build_err(UnauthorizedError::new());
@@ -356,14 +360,17 @@ where
     }
 }
 
+/// Reads the owner out of an id.
+type OwnerExtractor = Box<dyn Fn(&PkSk) -> Option<&str> + Send + Sync>;
+
 /// Owned CRUD spec with per-operation access controls and ownership extraction.
 pub struct OwnedCrud<T, O>
 where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
-    owner_of_id: Box<dyn Fn(&PkSk) -> Option<&str> + Send + Sync>,
-    owner_of_parent_id: Box<dyn Fn(&PkSk) -> Option<&str> + Send + Sync>,
+    owner_of_id: OwnerExtractor,
+    owner_of_parent_id: OwnerExtractor,
     access: OwnedCrudAccess,
     validation: Validation<CrudOperation<T>>,
     handler: BoxedCrudHandler<T, O>,
@@ -374,6 +381,10 @@ where
     T: DynamoObject + DeserializeOwned + Send + 'static,
     O: serde::Serialize + Send + 'static,
 {
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "routing tables hold specs as `Box<dyn CrudSpec>`, which `new` returns"
+    )]
     pub fn new<H, Fut, FOwnerId, FOwnerParentId>(
         owner_of_id: FOwnerId,
         owner_of_parent_id: FOwnerParentId,
@@ -412,8 +423,8 @@ where
             Err(e) => return build_err(e),
         };
         let method = &request.http_method;
-        let op = match method {
-            &Method::POST => {
+        let op = match *method {
+            Method::POST => {
                 if has_flag(request, "replace_all") {
                     if !preliminary_access_check(&metadata, &self.access.replace_all) {
                         return build_err(UnauthorizedError::new());
@@ -490,7 +501,7 @@ where
                     }
                 }
             }
-            &Method::GET => {
+            Method::GET => {
                 if has_flag(request, "all") {
                     if !preliminary_access_check(&metadata, &self.access.list) {
                         return build_err(UnauthorizedError::new());
@@ -598,7 +609,7 @@ where
                     }
                 }
             }
-            &Method::PUT => {
+            Method::PUT => {
                 if !preliminary_access_check(&metadata, &self.access.update) {
                     return build_err(UnauthorizedError::new());
                 }
@@ -615,7 +626,7 @@ where
                 }
                 CrudOperation::Update { item }
             }
-            &Method::DELETE => {
+            Method::DELETE => {
                 let non_recursive = has_flag(request, "non_recursive");
                 if non_recursive && !self.access.allow_non_recursive_delete {
                     return build_err(UnauthorizedError::new());
@@ -786,16 +797,16 @@ fn maybe_ids(request: &ApiGatewayProxyRequest) -> Option<Result<Vec<PkSk>, Serve
     request.query_string_parameters.first("ids").map(|raw| {
         let mut ids: Vec<PkSk> = Vec::new();
         if raw.trim().is_empty() {
-            return Err(InvalidRequestError::new(&format!(
-                "query parameter 'ids' must not be empty"
-            )));
+            return Err(InvalidRequestError::new(
+                "query parameter 'ids' must not be empty",
+            ));
         }
         for part in raw.split(',') {
             let trimmed = part.trim();
             if trimmed.is_empty() {
-                return Err(InvalidRequestError::new(&format!(
-                    "query parameter 'ids' contains empty id"
-                )));
+                return Err(InvalidRequestError::new(
+                    "query parameter 'ids' contains empty id",
+                ));
             }
             match PkSk::from_string(trimmed) {
                 Ok(p) => ids.push(p),
@@ -806,9 +817,10 @@ fn maybe_ids(request: &ApiGatewayProxyRequest) -> Option<Result<Vec<PkSk>, Serve
     })
 }
 
-fn maybe_keys(
-    request: &ApiGatewayProxyRequest,
-) -> Option<Result<(Option<PkSk>, Vec<String>), ServerError>> {
+/// The parent id and the keys under it.
+type KeysQuery = (Option<PkSk>, Vec<String>);
+
+fn maybe_keys(request: &ApiGatewayProxyRequest) -> Option<Result<KeysQuery, ServerError>> {
     request.query_string_parameters.first("keys").map(|raw| {
         let mut keys: Vec<String> = Vec::new();
         if raw.trim().is_empty() {
@@ -850,7 +862,7 @@ mod transport_tests {
         TestObject,
         TestData,
         "TEST",
-        IdLogic::Uuid,
+        IdLogic::UuidV4,
         NestingLogic::Root
     );
 
