@@ -8,10 +8,7 @@ use crate::errors::UnauthorizedError;
 
 pub fn is_authenticated(req: &ApiGatewayProxyRequest) -> bool {
     match req.request_context.authorizer.fields.get("claims") {
-        Some(claims) => match claims.get("cognito:username") {
-            Some(_) => true,
-            None => false,
-        },
+        Some(claims) => claims.get("cognito:username").is_some(),
         None => false,
     }
 }

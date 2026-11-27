@@ -282,9 +282,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.status_code, 200);
-        assert_eq!(body["ok"].as_bool().unwrap(), true);
+        assert!(body["ok"].as_bool().unwrap());
         assert_eq!(decode(body["data"].as_str().unwrap()), "\"Test string.\"");
-        assert_eq!(body["error"].is_null(), true);
+        assert!(body["error"].is_null());
     }
 
     #[test]
@@ -300,14 +300,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.status_code, 200);
-        assert_eq!(body["ok"].as_bool().unwrap(), true);
+        assert!(body["ok"].as_bool().unwrap());
         assert_eq!(
             serde_json::from_str::<MockResponseData>(&decode(body["data"].as_str().unwrap()))
                 .unwrap()
                 .key,
             "Test value."
         );
-        assert_eq!(body["error"].is_null(), true);
+        assert!(body["error"].is_null());
     }
 
     #[test]
@@ -322,8 +322,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.status_code, 200);
-        assert_eq!(body["ok"].as_bool().unwrap(), false);
-        assert_eq!(body["data"].is_null(), true);
+        assert!(!body["ok"].as_bool().unwrap());
+        assert!(body["data"].is_null());
         assert!(body["error"]
             .as_str()
             .unwrap()
@@ -342,8 +342,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.status_code, 200);
-        assert_eq!(body["ok"].as_bool().unwrap(), false);
-        assert_eq!(body["data"].is_null(), true);
+        assert!(!body["ok"].as_bool().unwrap());
+        assert!(body["data"].is_null());
         assert!(body["error"]
             .as_str()
             .unwrap()
