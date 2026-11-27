@@ -20,7 +20,6 @@ use serde::Serialize;
 use crate::{
     constants::{INTERNAL_SERVER_ERROR_MSG, UNAUTHORIZED_ERROR_MSG},
     errors::EncodingError,
-    shared::error_sink::report_response,
 };
 
 // API Gateway response utils.
@@ -99,22 +98,20 @@ where
 /// The response for an error that ends a request. An error the client
 /// handles is wrapped in a 200 with `ok: false`, because Amplify treats any
 /// 4xx or 5xx as a server failure; the rest get their status and a fixed
-/// message that leaks nothing. The error sink records which error ended the
-/// request and the status it was answered with.
+/// message that leaks nothing. Nothing is printed: the error sink recorded
+/// the error when it was constructed.
 pub(crate) fn build_err(error: ServerError) -> Result<ApiGatewayProxyResponse, Error> {
     use fractic_server_error::ServerErrorBehaviour as Behaviour;
 
-    let response = match error.behaviour() {
+    match error.behaviour() {
         Behaviour::ForwardToClient
         | Behaviour::LogWarningForwardToClient
-        | Behaviour::LogErrorForwardToClient => forwarded_error(error.message())?,
+        | Behaviour::LogErrorForwardToClient => forwarded_error(error.message()),
         Behaviour::LogWarningSendFixedMsgToClient(fixed_msg)
-        | Behaviour::LogErrorSendFixedMsgToClient(fixed_msg) => forwarded_error(fixed_msg)?,
-        Behaviour::ReturnInternalServerError => error_response(500, INTERNAL_SERVER_ERROR_MSG),
-        Behaviour::ReturnUnauthorized => error_response(401, UNAUTHORIZED_ERROR_MSG),
-    };
-    report_response(&error, u16::try_from(response.status_code).unwrap_or(500));
-    Ok(response)
+        | Behaviour::LogErrorSendFixedMsgToClient(fixed_msg) => forwarded_error(fixed_msg),
+        Behaviour::ReturnInternalServerError => Ok(error_response(500, INTERNAL_SERVER_ERROR_MSG)),
+        Behaviour::ReturnUnauthorized => Ok(error_response(401, UNAUTHORIZED_ERROR_MSG)),
+    }
 }
 
 fn forwarded_error(public_msg: &str) -> Result<ApiGatewayProxyResponse, Error> {

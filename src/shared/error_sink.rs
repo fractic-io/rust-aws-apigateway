@@ -1,17 +1,15 @@
 //! The Lambda's error sink: every `ServerError` constructed while handling
 //! an event, and every panic, becomes one JSON `ErrorRecord` line on stdout,
 //! which the function's log group receives next to the runtime's own lines.
-//! Each record carries the id of the invocation it occurred in, and the
-//! error that ends a request gets one more record with the status it was
-//! answered with (`report_response`). These records are the function's only
-//! error output.
+//! Each record carries the id of the invocation it occurred in. These
+//! records are the function's only error output.
 
 use std::{
     env, panic,
     sync::{Mutex, OnceLock},
 };
 
-use fractic_server_error::{install_error_sink, ErrorOrigin, ErrorRecord, ServerError};
+use fractic_server_error::{install_error_sink, ErrorOrigin, ErrorRecord};
 
 // Public interface.
 // ----------------------------------------------------------------------------
@@ -70,14 +68,6 @@ where
 
 static ORIGIN: OnceLock<ErrorOrigin> = OnceLock::new();
 static REQUEST: Mutex<Option<String>> = Mutex::new(None);
-
-/// Records that `error` ended the request and how it was answered. Does
-/// nothing in a process without the sink.
-pub(crate) fn report_response(error: &ServerError, status: u16) {
-    if let Some(origin) = ORIGIN.get() {
-        print_record(ErrorRecord::from_response(error.as_ref(), status, origin));
-    }
-}
 
 fn print_record(mut record: ErrorRecord) {
     record.request = current_request();
