@@ -35,8 +35,8 @@ pub fn install_lambda_error_sink(source: &str, crate_version: &str) {
     if ORIGIN.set(origin).is_err() {
         return;
     }
-    // Another sink installed first keeps the process; this one then adds no
-    // panic hook either.
+    // A sink installed earlier stays the process's sink, and this one adds no
+    // panic hook.
     if !install_error_sink(Box::new(|event| {
         if let Some(origin) = ORIGIN.get() {
             print_record(ErrorRecord::from_event(&event, origin));
@@ -55,7 +55,7 @@ pub fn install_lambda_error_sink(source: &str, crate_version: &str) {
 
 /// Runs one invocation with its request id stamped on the records written
 /// meanwhile. `lambda_runtime::run` handles one invocation at a time, so one
-/// process-wide id is enough. Called by `aws_lambda_handle_raw!`.
+/// process-wide id is enough.
 #[doc(hidden)]
 pub async fn __in_request<F, T>(request_id: String, invocation: F) -> T
 where
