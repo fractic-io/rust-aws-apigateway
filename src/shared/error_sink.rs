@@ -35,11 +35,15 @@ pub fn install_lambda_error_sink(source: &str, crate_version: &str) {
     if ORIGIN.set(origin).is_err() {
         return;
     }
-    install_error_sink(Box::new(|event| {
+    // Another sink installed first keeps the process; this one then adds no
+    // panic hook either.
+    if !install_error_sink(Box::new(|event| {
         if let Some(origin) = ORIGIN.get() {
             print_record(ErrorRecord::from_event(&event, origin));
         }
-    }));
+    })) {
+        return;
+    }
     let previous = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         if let Some(origin) = ORIGIN.get() {
