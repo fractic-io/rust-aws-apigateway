@@ -22,6 +22,7 @@ mod handle_with_router {
 }
 mod shared {
     pub mod auth_utils;
+    pub mod error_sink;
     pub mod request_processing;
     pub mod response_building;
 }
@@ -41,6 +42,7 @@ pub use handle_with_router::routing_config::*;
 pub use handle_with_router::std::crud_specs::*;
 pub use handle_with_router::std::function_specs::*;
 pub use handle_with_router::std::validators::*;
+pub use shared::error_sink::*;
 pub use shared::request_processing::*;
 pub use shared::response_building::*;
 

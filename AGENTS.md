@@ -10,13 +10,18 @@ parsing / auth, JSON response building and the standard API errors.
 `src/lib.rs` → `handle_raw/macros.rs`, `handle_with_function/macros.rs`,
 `handle_with_router/{macros.rs, routing_config.rs,
 std/{crud_specs,function_specs,validators}.rs}`,
-`shared/{auth_utils,request_processing,response_building}.rs`,
+`shared/{auth_utils,error_sink,request_processing,response_building}.rs`,
 `constants.rs`, `errors.rs`. `serde_json` is remapped to
 `serde_json_path_to_error` crate-wide.
 
 - Verify macro changes by building a consumer; generated code may only use
   paths that resolve in the consuming crate (`fractic_*`, `serde_json`,
   `lambda_runtime`, `aws_lambda_events`).
+- `aws_lambda_handle_raw!` installs the error sink (`error_sink.rs`) and
+  runs each invocation under its request id: every constructed
+  `ServerError` and every panic is one JSON `ErrorRecord` line on stdout,
+  with the invocation's id as `request`. Nothing else prints errors; alarms and
+  log readers filter these records.
 - CORS headers are hard-coded for `https://fractic.io` in
   `response_building.rs`; the response shape is what client apps parse, so
   changing it breaks them.

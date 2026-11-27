@@ -95,76 +95,41 @@ where
     Ok(resp)
 }
 
+/// The response for an error that ends a request. An error the client
+/// handles is wrapped in a 200 with `ok: false`, because Amplify treats any
+/// 4xx or 5xx as a server failure; the rest get their status and a fixed
+/// message that leaks nothing. Nothing is printed: the error sink recorded
+/// the error when it was constructed.
 pub(crate) fn build_err(error: ServerError) -> Result<ApiGatewayProxyResponse, Error> {
-    enum LoggingLevel {
-        Error,
-        Warning,
-        Info,
-    }
+    use fractic_server_error::ServerErrorBehaviour as Behaviour;
 
-    // Two ways to handle errors:
-
-    // 1) Forward to the client by wrapping the error in a 200 response. This
-    // allows the client to gracefully handle it.
-    let forward_to_client = |public_msg: &str, logging_level: LoggingLevel| {
-        match logging_level {
-            LoggingLevel::Error => eprintln!("ERROR\n{}", error),
-            LoggingLevel::Warning => println!("WARNING\n{}", error),
-            LoggingLevel::Info => println!("INFO\n{}", error),
-        }
-        println!("NOTE: Forwarding to client. Returning 200 response.");
-        let wrapper = ResponseWrapper {
-            ok: false,
-            data: None,
-            error: Some(public_msg.into()),
-        };
-        // Outer status code should still be 200 for client-errors, otherwise Amplify
-        // will treat it as a server error. The client will know there is a client
-        // error because ok == false.
-        Ok::<_, Error>(build_response(
-            200,
-            ContentType::Json,
-            serde_json::to_string(&wrapper)?.into(),
-            false,
-        ))
-    };
-
-    // 2) Return an error response, triggerring alerting, affecting lambda
-    // statistics, and avoiding leaking any error data to the client.
-    let error_response = |error_code: i64, public_msg: &str| {
-        eprintln!("ERROR\n{}", error);
-        Ok::<_, Error>(build_response(
-            error_code,
-            ContentType::Text,
-            public_msg.into(),
-            false,
-        ))
-    };
-
-    // Decide based on the error behaviour type.
     match error.behaviour() {
-        fractic_server_error::ServerErrorBehaviour::ForwardToClient => {
-            forward_to_client(error.message(), LoggingLevel::Info)
-        }
-        fractic_server_error::ServerErrorBehaviour::LogWarningForwardToClient => {
-            forward_to_client(error.message(), LoggingLevel::Warning)
-        }
-        fractic_server_error::ServerErrorBehaviour::LogErrorForwardToClient => {
-            forward_to_client(error.message(), LoggingLevel::Error)
-        }
-        fractic_server_error::ServerErrorBehaviour::LogWarningSendFixedMsgToClient(fixed_msg) => {
-            forward_to_client(fixed_msg, LoggingLevel::Warning)
-        }
-        fractic_server_error::ServerErrorBehaviour::LogErrorSendFixedMsgToClient(fixed_msg) => {
-            forward_to_client(fixed_msg, LoggingLevel::Error)
-        }
-        fractic_server_error::ServerErrorBehaviour::ReturnInternalServerError => {
-            error_response(500, INTERNAL_SERVER_ERROR_MSG)
-        }
-        fractic_server_error::ServerErrorBehaviour::ReturnUnauthorized => {
-            error_response(401, UNAUTHORIZED_ERROR_MSG)
-        }
+        Behaviour::ForwardToClient
+        | Behaviour::LogWarningForwardToClient
+        | Behaviour::LogErrorForwardToClient => forwarded_error(error.message()),
+        Behaviour::LogWarningSendFixedMsgToClient(fixed_msg)
+        | Behaviour::LogErrorSendFixedMsgToClient(fixed_msg) => forwarded_error(fixed_msg),
+        Behaviour::ReturnInternalServerError => Ok(error_response(500, INTERNAL_SERVER_ERROR_MSG)),
+        Behaviour::ReturnUnauthorized => Ok(error_response(401, UNAUTHORIZED_ERROR_MSG)),
     }
+}
+
+fn forwarded_error(public_msg: &str) -> Result<ApiGatewayProxyResponse, Error> {
+    let wrapper = ResponseWrapper {
+        ok: false,
+        data: None,
+        error: Some(public_msg.into()),
+    };
+    Ok(build_response(
+        200,
+        ContentType::Json,
+        serde_json::to_string(&wrapper)?.into(),
+        false,
+    ))
+}
+
+fn error_response(status: i64, public_msg: &str) -> ApiGatewayProxyResponse {
+    build_response(status, ContentType::Text, public_msg.into(), false)
 }
 
 // Helper functions.
