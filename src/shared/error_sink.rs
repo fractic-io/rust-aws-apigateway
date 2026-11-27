@@ -1,9 +1,8 @@
 //! The Lambda's error sink: every `ServerError` constructed while handling
 //! an event, and every panic, becomes one JSON `ErrorRecord` line on stdout,
 //! which the function's log group receives next to the runtime's own lines.
-//! The nightly error triage reads the records; the `ERROR` lines that
-//! `build_err` prints for escaped errors stay, because the log group's alarm
-//! counts those.
+//! The `ERROR` lines that `build_err` prints for escaped errors stay as they
+//! are, because log-group alarms count those.
 
 use std::{env, panic};
 
