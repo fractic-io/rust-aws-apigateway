@@ -17,10 +17,12 @@ std/{crud_specs,function_specs,validators}.rs}`,
 - Verify macro changes by building a consumer; generated code may only use
   paths that resolve in the consuming crate (`fractic_*`, `serde_json`,
   `lambda_runtime`, `aws_lambda_events`).
-- `aws_lambda_handle_raw!` installs the error sink (`error_sink.rs`): every
-  constructed `ServerError` and every panic is one JSON `ErrorRecord` line
-  on stdout. The `ERROR` lines `build_err` prints for escaped errors stay as
-  they are, because log-group alarms count them.
+- `aws_lambda_handle_raw!` installs the error sink (`error_sink.rs`) and
+  runs each invocation under its request id: every constructed
+  `ServerError` and every panic is one JSON `ErrorRecord` line on stdout,
+  and `build_err` adds one with `response` (the status) for the error that
+  ended the request. Nothing else prints errors; alarms and log readers
+  filter these records.
 - CORS headers are hard-coded for `https://fractic.io` in
   `response_building.rs`; the response shape is what client apps parse, so
   changing it breaks them.
